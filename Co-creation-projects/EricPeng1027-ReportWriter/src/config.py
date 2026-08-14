@@ -30,10 +30,10 @@ class Settings(BaseSettings):
     llm_timeout: int = 180
 
     # ---- RAG / 向量库配置 ----
-    qdrant_url: str = ""
+    qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "reportwriter_vectors"
-    qdrant_vector_size: int = 1024  # dashscope text-embedding-v3 为 1024
+    qdrant_vector_size: int = 1536  # dashscope text-embedding-v3 为 1536
     qdrant_distance: str = "cosine"
     qdrant_timeout: int = 30
 

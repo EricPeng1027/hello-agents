@@ -5,15 +5,17 @@
 """
 
 from datetime import datetime
-from typing import List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from .agents.drafter import DraftingAgent
 from .agents.planner import PlannerAgent
 from .agents.reviewer import ReviewAgent
 from .config import get_settings
 from .exporter import Exporter
-from .materials.manager import MaterialManager
+from .materials.manager import SCOPE_FACTS, SCOPE_STYLE, MaterialManager
 from .models import DocumentDraft, DocumentTypeSpec, SectionDraft
+from .prompts import get_drafter_task_template, get_drafter_task_template_single
 from .registry import get_registry
 from .tools.recall_material import (
     TOOL_DESCRIPTION,
@@ -75,13 +77,34 @@ class ReportWriterOrchestrator:
 
         # ① 导入参考材料
         materials_dir = materials_dir or self.settings.data_dir
+        split_dirs = spec.uses_split_material_dirs()
+        facts_dir = Path(materials_dir) / spec.material_facts_dir
+        style_dir = Path(materials_dir) / spec.material_style_dir
+        use_split = split_dirs and (facts_dir.is_dir() or style_dir.is_dir())
+
         if spec.material_mode != "none" and self.material.ready:
-            print(f"▸ 第一步：导入参考材料（{self.material.effective_mode} 模式）")
-            ingest_result = self.material.ingest(materials_dir)
-            self.stats["material_hits"] = ingest_result.get("success", 0)
+            if use_split:
+                print(
+                    f"▸ 第一步：导入参考材料（{self.material.effective_mode} 模式，"
+                    "facts/style 分库）"
+                )
+                total = 0
+                if facts_dir.is_dir():
+                    r = self.material.ingest(str(facts_dir), scope=SCOPE_FACTS)
+                    total += r.get("success", 0)
+                if style_dir.is_dir():
+                    r = self.material.ingest(str(style_dir), scope=SCOPE_STYLE)
+                    total += r.get("success", 0)
+                self.stats["material_hits"] = total
+            else:
+                print(f"▸ 第一步：导入参考材料（{self.material.effective_mode} 模式）")
+                ingest_result = self.material.ingest(materials_dir)
+                self.stats["material_hits"] = ingest_result.get("success", 0)
         elif spec.material_mode != "none" and not self.material.ready:
             print(f"▸️  参考材料后端未就绪（{self.material.error}），跳过导入")
             self.stats["material_hits"] = 0
+
+        self._use_split_materials = use_split
 
         # ② 规划章节大纲
         print("\n▸ 第二步：规划章节大纲（Plan-and-Solve）")
@@ -147,11 +170,33 @@ class ReportWriterOrchestrator:
 
         return draft
 
-    def _get_section_refs(self, sec_spec, spec: DocumentTypeSpec) -> str:
-        """主动注入：按章节检索参考材料片段"""
+    def _get_section_refs(self, sec_spec, spec: DocumentTypeSpec):
+        """主动注入：按章节检索参考材料片段
+
+        返回：
+        - 分库模式：{"facts": str, "style": str, "split": True}
+        - 单库模式：str（向后兼容）
+        """
         if spec.material_mode == "none" or not self.material.ready:
+            if getattr(self, "_use_split_materials", False):
+                return {
+                    "facts": "（暂无相关参考材料）",
+                    "style": "（暂无相关参考材料）",
+                    "split": True,
+                }
             return "（未启用参考材料）"
+
         query = f"{sec_spec.title} {sec_spec.hints}"
+        if getattr(self, "_use_split_materials", False):
+            return {
+                "facts": self.material.get_relevant(
+                    query, top_k=spec.material_top_k, scope=SCOPE_FACTS
+                ),
+                "style": self.material.get_relevant(
+                    query, top_k=spec.material_top_k, scope=SCOPE_STYLE
+                ),
+                "split": True,
+            }
         return self.material.get_relevant(query, top_k=spec.material_top_k)
 
     def list_types(self) -> List[str]:

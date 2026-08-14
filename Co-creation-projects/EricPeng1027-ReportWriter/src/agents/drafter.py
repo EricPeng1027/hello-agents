@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from hello_agents import HelloAgentsLLM, SimpleAgent
 
 from ..models import DocumentTypeSpec, SectionSpec
+from ..prompts import get_drafter_task_template_single
 from ..utils import JSONExtractor, count_words
 from .llm_service import LLMService
 
@@ -156,7 +157,7 @@ class DraftingAgent:
         self,
         section: SectionSpec,
         outline: Dict[str, Any],
-        reference_materials: str,
+        reference_materials,
         spec: DocumentTypeSpec,
     ) -> str:
         sec_outline = self._find_section_outline(section.key, outline)
@@ -168,13 +169,40 @@ class DraftingAgent:
                 f"- {p}" for p in points
             )
 
-        return spec.custom_prompts["drafter_task"].format(
+        # 分库模式：reference_materials 为 {"facts","style","split"} dict
+        if isinstance(reference_materials, dict) and reference_materials.get("split"):
+            return spec.custom_prompts["drafter_task"].format(
+                section_key=section.key,
+                section_title=section.title,
+                section_hints=section.hints,
+                target_words=section.target_words,
+                outline_summary=outline_summary,
+                facts_materials=reference_materials.get(
+                    "facts", "（暂无相关参考材料）"
+                ),
+                style_materials=reference_materials.get(
+                    "style", "（暂无相关参考材料）"
+                ),
+            )
+
+        # 单库模式：reference_materials 为 str
+        refs = (
+            reference_materials
+            if isinstance(reference_materials, str)
+            else "（暂无相关参考材料）"
+        )
+        # 若 spec.custom_prompts["drafter_task"] 是双区块模板，
+        # 单库模式退化为单区块模板，避免 {facts_materials} 占位符缺失
+        template = spec.custom_prompts["drafter_task"]
+        if "{facts_materials}" in template:
+            template = get_drafter_task_template_single()
+        return template.format(
             section_key=section.key,
             section_title=section.title,
             section_hints=section.hints,
             target_words=section.target_words,
             outline_summary=outline_summary,
-            reference_materials=reference_materials,
+            reference_materials=refs,
         )
 
     @staticmethod

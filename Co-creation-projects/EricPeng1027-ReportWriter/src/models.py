@@ -57,6 +57,14 @@ class DocumentTypeSpec:
     material_top_k: int = 3
     # 该类型如何使用参考材料的说明（风格/口径/事实 等）
     material_role_hint: str = ""
+    # 事实材料目录（相对 data_dir）：内容必须基于它（数据/事实/口径）
+    material_facts_dir: str = "facts"
+    # 风格材料目录（相对 data_dir）：仅参考写法与结构，不得照搬内容
+    material_style_dir: str = "style"
+
+    def uses_split_material_dirs(self) -> bool:
+        """是否启用 事实/风格 分目录模式"""
+        return bool(self.material_facts_dir or self.material_style_dir)
 
     def total_target_words(self) -> int:
         """所有必填章节目标字数之和"""

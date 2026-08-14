@@ -11,6 +11,7 @@
 """
 
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -175,7 +176,8 @@ class RAGBackend:
 
         points = [
             qm.PointStruct(
-                id=f"{self.namespace}_{p.stem}_{idx}".replace(" ", "_")[:60] + f"_{idx}",
+                # Qdrant point ID 必须是无符号整数或 UUID,用 UUID5 保证同文件同片段可重复
+                id=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{self.namespace}_{p.stem}_{idx}")),
                 vector=vec,
                 payload={
                     "text": chunk,

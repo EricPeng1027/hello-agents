@@ -92,6 +92,40 @@ DRAFTER_TASK_TEMPLATE = """请撰写材料中的某一章节。
 ## 大纲要点
 {outline_summary}
 
+## 事实依据（内容必须基于以下材料，数据/事实/口径以此为准）
+{facts_materials}
+
+## 风格参考（仅借鉴行文风格、结构与表达方式，严禁照搬其内容与数据）
+{style_materials}
+
+## 输出要求
+完成撰写后，必须使用 `Finish[JSON内容]` 格式输出结果，JSON 结构如下：
+```json
+{{
+  "key": "{section_key}",
+  "title": "{section_title}",
+  "content": "章节正文（Markdown格式）",
+  "word_count": 实际字数
+}}
+```
+
+重要：
+- content 字段必须包含完整的章节正文。
+- 事实依据是内容的事实来源，必须基于它撰写；风格参考仅用于学习写法，不得把其中的事实/数据写入正文。
+- 如需补充事实或确认口径，可调用 recall_material 工具检索（facts 查事实，style 查写法）。
+"""
+
+# 单库模式（未分 facts/style 目录时）使用的任务模板，保持与旧版兼容
+DRAFTER_TASK_TEMPLATE_SINGLE = """请撰写材料中的某一章节。
+
+## 章节信息
+- 章节标题: {section_title}
+- 章节要求: {section_hints}
+- 目标字数: {target_words} 字（允许误差 ±10%）
+
+## 大纲要点
+{outline_summary}
+
 ## 参考材料（仅供参考风格、口径与事实，须基于当前主题重写，不得照搬）
 {reference_materials}
 
@@ -164,8 +198,13 @@ def get_drafter_react_prompt() -> str:
 
 
 def get_drafter_task_template() -> str:
-    """获取 Drafter 的章节任务模板"""
+    """获取 Drafter 的章节任务模板（双区块：事实依据 + 风格参考）"""
     return DRAFTER_TASK_TEMPLATE
+
+
+def get_drafter_task_template_single() -> str:
+    """获取 Drafter 的章节任务模板（单库模式，向后兼容）"""
+    return DRAFTER_TASK_TEMPLATE_SINGLE
 
 
 def get_reviewer_prompts() -> dict:

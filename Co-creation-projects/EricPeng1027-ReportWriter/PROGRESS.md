@@ -102,8 +102,24 @@ EricPeng1027-ReportWriter/
   2. **Drafter 回退清洗**:兜底撰写输出会剥离混入的 ReAct 痕迹(Thought/Action/Finish),避免把推理文本当正文。
   3. **不达标阈值**:撰写结果低于目标字数 40% 触发回退(原来只卡 <30 字)。
   4. **SimpleAgent trace 关闭**:回退撰写传 `Config(trace_enabled=False)`,不再在项目根目录生成 `memory/traces/`。
-- ⚠️ 真实 LLM 端到端未验证:当前网络代理拦截 aiserver.hisi.huawei.com(HIS Proxy Notification),需在能访问内网 LLM 的环境跑一次真实 `write()`。
-- ⚠️ `python-docx` 未装,DOCX 导出未实测(代码路径已有 try/except 兜底)。建议 `pip install python-docx qdrant-client markitdown` 补齐。
+
+### 3.1b ✅ 真实环境验证(P1.7,2026-08-14 已完成)
+真实 LLM 端到端跑通:`write('work_summary','2026年Q2研发部工作总结')` → 5 章 **2102 字**,耗时 513 秒,MD+DOCX 双导出成功(质量高,ReAct 各节一轮 `Finish[JSON]` 即完成,Reflection 各节"无需改进")。
+- 关键修复(`.env` 两处):
+  1. `LLM_BASE_URL` 必须带 **`/v1`** 后缀(`http://aiserver.hisi.huawei.com/v1`),否则裸域名返回网关前端 HTML 页面,openai 库收到 str 而非 ChatCompletion
+  2. 必须配 **`NO_PROXY=localhost,127.0.0.1,.huawei.com`**:公司系统代理(proxyza.huawei.com:8080)会拦截内网 LLM 域名(HIS Proxy Notification 拦截页),openai/httpx `trust_env=True` 读到 NO_PROXY 后直连即可
+- `python-docx` 已在环境就绪(notebook 内核),DOCX 导出验证通过
+- ⚠️ 注意:notebook 内核与 shell `python` 的 site-packages 可能不同;缺包时在内核里 `%pip install` 而非只装到 shell 环境
+
+### 3.1c ✅ 参考材料分角色:facts/style 双库(2026-08-14 已完成)
+用户场景:导入的材料有两种角色——**事实材料**(与工作内容相关,生成内容必须基于它)与**风格材料**(与工作无关,只参考写法)。已实现:
+- **目录约定**: `data/facts/`(事实依据)+ `data/style/`(风格参考);任一目录存在即启用分库模式,都不存在走旧的单库模式(向后兼容)
+- **Spec**: `DocumentTypeSpec` 新增 `material_facts_dir="facts"` / `material_style_dir="style"` 字段
+- **MaterialManager**: `ingest(path, scope=)` / `get_relevant(query, scope=)` 支持角色,内部为每个 scope 维护独立后端实例(namespace 派生 `{ns}_{scope}`)
+- **prompt 拆分**: 新增双区块任务模板(事实依据"必须基于、以此为准" / 风格参考"仅借鉴写法、严禁照搬");单库模式自动回退单区块模板
+- **recall_material**: 支持 `recall_material[scope:facts][关键词]` / `[scope:style][关键词]` 定向检索
+- **本地后端兜底**: 字面/2-gram 检索无命中时返回最新片段,保证"有参考"
+- 冒烟测试:双库注入 5/5 章节(facts/style 各自命中)、单库模式兼容、scope 解析正确
 
 ### 3.2 🟡 环境配置补全(真实 RAG 运行前必做)
 用户 `.env` 里以下两组还是占位符:
@@ -158,6 +174,7 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 - [x] P1.4 编排+导出: orchestrator 串流水线 + exporter(MD+DOCX)
 - [x] P1.5 打磨: main.ipynb 7段式 + README + 错误兜底 + 依赖更新
 - [x] **P1.6 运行验证**: 冒烟测试通过 + 本地兜底后端 + 回退清洗/trace 关闭(2026-08-13)
-- [ ] **P1.7 真实环境验证**: 在能访问内网 LLM 的环境跑一次真实 `write()`;补装 `python-docx/qdrant-client/markitdown` 验证 DOCX/RAG
+- [x] **P1.7 真实环境验证**: 修复 .env(/v1 后缀 + NO_PROXY 绕过公司代理),真实 LLM 全链路跑通,5 章 2102 字 + MD/DOCX 导出(2026-08-14)
+- [x] **P1.8 参考材料分角色**: facts/style 双库目录 + prompt 双区块注入 + recall_material scope 参数(2026-08-14)
 - [ ] P2: 补汇报、KPI 计划类型 Spec
 - [ ] P3: 交互式撰写 / 工具扩展 / 评审打分落地

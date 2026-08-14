@@ -111,7 +111,11 @@ class LocalMaterialBackend:
                 scored.append((score, chunk))
 
         if not scored:
-            return ""
+            # 字面检索无命中时，兜底返回最新导入的片段（本地模式只追求"有参考"）
+            fallback = self._chunks[-top_k:]
+            return "\n\n---\n\n".join(
+                f"【来源: {source}】\n{text}" for text, source, _ in fallback
+            )
 
         scored.sort(key=lambda x: x[0], reverse=True)
         results = []
