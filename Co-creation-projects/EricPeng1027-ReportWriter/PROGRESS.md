@@ -19,43 +19,34 @@
 - 输出格式:**Markdown + DOCX**
 - 参考材料后端:**RAG**(Qdrant + Embedding)
 
-### 2.2 已交付文件
+### 2.2 已交付文件（2026-08-14 整理后）
 ```
 EricPeng1027-ReportWriter/
 ├── main.ipynb                  # 7段式入口(已同步真实 API)
+├── run_web.py                  # Web UI 启动入口
 ├── README.md                   # 完整文档
-├── requirement.txt             # 含 hello-agents/python-docx/qdrant-client/openai/markitdown
-├── .env                        # 已配 LLM_*;QDRANT_*/EMBED_* 仍为占位符
-├── data/                       # 放参考材料(md/docx/pdf/txt)
-├── outputs/                    # 生成结果
-└── src/
-    ├── __init__.py
-    ├── config.py               # Settings(pydantic)
-    ├── models.py               # DocumentTypeSpec/SectionSpec/DocumentDraft/ReviewResult
-    ├── registry.py             # 类型注册表(扩展核心)
-    ├── prompts.py              # 三范式提示词模板
-    ├── utils.py                # JSONExtractor/字数统计/时间戳
-    ├── exporter.py             # Markdown + DOCX 导出
-    ├── orchestrator.py         # 流水线编排
-    ├── agents/
-    │   ├── __init__.py
-    │   ├── llm_service.py      # HelloAgentsLLM 单例
-    │   ├── planner.py          # Plan-and-Solve(教程原生写法)
-    │   ├── drafter.py          # ReAct(教程原生)+ recall_material 工具
-    │   └── reviewer.py         # Reflection(教程原生)
-    ├── materials/
-    │   ├── __init__.py
-    │   ├── manager.py          # MaterialManager(auto/rag/local 三模式)
-    │   ├── rag_backend.py      # Qdrant+Embedding 自建 RAG
-    │   ├── local_backend.py    # 本地内存兜底(纯字面+2-gram 匹配)
-    │   └── loader.py           # 目录扫描
-    ├── tools/
-    │   ├── __init__.py
-    │   └── recall_material.py  # 检索参考材料工具(函数式)
-    └── types/
-        ├── __init__.py
-        └── work_summary.py     # 工作总结 Spec(P1)
+├── requirement.txt             # 依赖(hello-agents/docx/qdrant/openai/markitdown/fastapi/sse)
+├── .env                        # 已配 LLM_*;QDRANT_*/EMBED_* 已可用
+├── data/                       # 参考材料(facts/ 事实 + style/ 风格)
+├── outputs/                    # 生成结果(时间戳子目录)
+├── src/
+│   ├── config.py               # Settings(pydantic)
+│   ├── models.py               # Spec/Draft/RevisionFeedback/ReviewResult
+│   ├── registry.py             # 类型注册表(扩展核心)
+│   ├── prompts.py              # 三范式提示词模板
+│   ├── utils.py                # JSONExtractor/字数统计/时间戳
+│   ├── exporter.py             # Markdown + DOCX 导出
+│   ├── orchestrator.py         # 流水线编排(write/prepare/draft_with_outline/revise)
+│   ├── agents/                 # llm_service + planner + drafter + reviewer
+│   ├── materials/              # manager + rag_backend + local_backend + loader
+│   ├── tools/                  # recall_material 工具
+│   └── types/                  # work_summary + report + kpi_plan 三个 Spec
+└── web/
+    ├── server.py               # FastAPI 路由 + SSE + 后台阶段执行
+    ├── session.py              # 内存会话 + 事件队列
+    └── static/                 # 前端(index.html/app.js/style.css + vendor/mini-md.js)
 ```
+> 整理说明:已删除 3 个冒烟脚本(_smoke_revise/types/web.py,验证结论保留在各 P 条目)、outputs/ 早期导出、__pycache__。
 
 ### 2.3 关键架构决策(实现中对齐了框架真实 API)
 
@@ -160,9 +151,13 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
 > RAG 未就绪时已不再阻塞:自动降级为本地参考材料模式,仍可生成并注入参考片段。
 
-### 3.3 🟡 P2:补"汇报""KPI 计划"两个类型 Spec
-在 `src/types/` 新增 `report.py`、`kpi_plan.py`,定义 `DocumentTypeSpec` 并在 `registry.py` 的 `_register_builtin_types` 注册。核心代码零改动,验证可扩展性。
-- KPI 类型可能需专属工具(如 `kpi_calculator`),在 `src/tools/` 加 `Tool` 子类并在 spec.tools 引用。
+### 3.3 ✅ P2:补"汇报""KPI 计划"两个类型 Spec(2026-08-14 已完成)
+验证"新增类型 ≈ 新增 Spec 配置、零侵入核心代码"的扩展性承诺:
+- **新增** `src/types/report.py`(汇报,5 章:核心结论/重点进展/关键数据/问题与诉求/下一步安排,1600 字,结论先行)与 `src/types/kpi_plan.py`(KPI 计划,5 章:目标总览/量化指标/关键行动/资源与保障/考核与复盘节奏,1900 字,SMART 可考核)
+- **注册**: `registry.py` 的 `_register_builtin_types` 加两行 import+register,核心代码(编排器/Agent/导出/web)**零改动**
+- 两类型复用全部通用 prompt(planner/executor/drafter_react/drafter_task/reviewer 含 revise)与 facts/style 分库材料层;web `/api/types` 自动出现新类型,大纲确认/反馈修订等交互无需任何适配
+- **冒烟测试**(`_smoke_types.py`,agent 方法级 stub)5 项断言组通过:类型注册/spec 结构(含 revise 模板)/两类型端到端 write(各 5 章)/按章节修订只改目标章/work_summary 回归
+- KPI 类型暂未加专属工具(如 kpi_calculator):当前 recall_material 已够用,量化计算工具留待真实使用中按需补(P3 工具扩展一并考虑)
 
 ### 3.4 🟢 P3 及以后
 - [x] ~~本地后端兜底(无 Qdrant 时用关键词/章节匹配,`material_mode="local"`)~~ —— P1.6 已实现 `local_backend.py` + `auto` 模式
@@ -179,6 +174,7 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 |---|---|
 | 改流水线/加步骤 | `src/orchestrator.py` |
 | 加新材料类型 | `src/types/`(新建文件)+ `src/registry.py`(注册) |
+| 参考类型 Spec 写法 | `src/types/work_summary.py` / `report.py` / `kpi_plan.py` |
 | 改某范式的提示词 | `src/prompts.py` + `src/types/work_summary.py` 的 `custom_prompts` |
 | 调 RAG 检索/导入 | `src/materials/rag_backend.py`、`src/materials/manager.py` |
 | 调本地兜底检索 | `src/materials/local_backend.py` |
@@ -202,5 +198,5 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 - [x] **P1.8 参考材料分角色**: facts/style 双库目录 + prompt 双区块注入 + recall_material scope 参数(2026-08-14)
 - [x] **P1.9 用户反馈修订**: `orchestrator.revise(draft, feedback)` 全文统一意见逐章修订 + facts 检索注入 + reingest;修复 qdrant-client `search()` 已移除导致 RAG 静默返回空(2026-08-14)
 - [x] **P1.10 Web UI**: FastAPI+SSE+原生前端;撰写/大纲确认/反馈修订(按章节)/材料上传;编排器拆分 prepare/draft_with_outline + 进度回调;WRITE_LOCK 串行化(2026-08-14)
-- [ ] P2: 补汇报、KPI 计划类型 Spec
-- [ ] P3: 交互式撰写 / 工具扩展 / 评审打分落地
+- [x] **P2 新材料类型**: 汇报(report,结论先行 5 章)+ KPI 计划(kpi_plan,SMART 5 章)Spec 注册,核心零改动验证可扩展性(2026-08-14)
+- [ ] P3: 交互式撰写(对话式) / 工具扩展(数据表/图表) / 评审打分落地

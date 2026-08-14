@@ -1,6 +1,6 @@
 # ReportWriter —— 智能材料撰写 Agent
 
-> 基于 HelloAgents v1.0.0 框架，撰写工作总结、汇报、KPI 计划等多类型材料，支持导入参考材料并扩展更多材料类型。
+> 基于 HelloAgents v1.0.0 框架，撰写工作总结、汇报、KPI 计划等多类型材料，支持导入参考材料并扩展更多材料类型。已内置三种类型：工作总结 / 汇报 / KPI 计划。
 
 ## 📝 项目简介
 
@@ -30,40 +30,54 @@ ReportWriter 是一个 AI 原生的材料撰写智能体。它把"撰写一份�
 ```
 
 ```
-src/
-├── config.py            配置（.env 统一变量）
-├── models.py            DocumentTypeSpec / SectionSpec / DocumentDraft
-├── registry.py          材料类型注册表（扩展核心）
-├── prompts.py           通用提示词模板
-├── utils.py             JSON 提取/字数统计
-├── exporter.py          Markdown + DOCX 导出
-├── orchestrator.py      流水线编排
-├── agents/
-│   ├── llm_service.py   HelloAgentsLLM 单例
-│   ├── planner.py       PlanAndSolve 包装
-│   ├── drafter.py       ReAct 包装
-│   └── reviewer.py      Reflection 包装
-├── materials/
-│   ├── manager.py       MaterialManager（导入/检索统一入口）
-│   ├── rag_backend.py   Qdrant + Embedding RAG 后端
-│   ├── local_backend.py 本地内存后端（RAG 不可用时兜底）
-│   └── loader.py        目录扫描
-├── tools/
-│   └── recall_material.py   检索参考材料工具
-└── types/
-    └── work_summary.py      工作总结 Spec
+EricPeng1027-ReportWriter/
+├── main.ipynb             Notebook 入口（7 段式演示）
+├── run_web.py             Web UI 启动入口（python run_web.py）
+├── requirement.txt        依赖
+├── PROGRESS.md            项目进展与 TODO
+├── .env                   配置（LLM/RAG/Embedding）
+├── data/                  参考材料（facts/ 事实 + style/ 风格）
+├── outputs/               生成结果（时间戳子目录）
+├── src/                   核心代码（框架无关，notebook/web 共用）
+│   ├── config.py            配置（.env 统一变量）
+│   ├── models.py            DocumentTypeSpec / SectionSpec / DocumentDraft / RevisionFeedback
+│   ├── registry.py          材料类型注册表（扩展核心）
+│   ├── prompts.py           通用提示词模板
+│   ├── utils.py             JSON 提取/字数统计
+│   ├── exporter.py          Markdown + DOCX 导出
+│   ├── orchestrator.py      流水线编排（write/prepare/draft_with_outline/revise）
+│   ├── agents/
+│   │   ├── llm_service.py   HelloAgentsLLM 单例
+│   │   ├── planner.py       PlanAndSolve 包装
+│   │   ├── drafter.py       ReAct 包装
+│   │   └── reviewer.py      Reflection 包装
+│   ├── materials/
+│   │   ├── manager.py       MaterialManager（导入/检索统一入口）
+│   │   ├── rag_backend.py   Qdrant + Embedding RAG 后端
+│   │   ├── local_backend.py 本地内存后端（RAG 不可用时兜底）
+│   │   └── loader.py        目录扫描
+│   ├── tools/
+│   │   └── recall_material.py   检索参考材料工具
+│   └── types/
+│       ├── work_summary.py    工作总结 Spec（P1）
+│       ├── report.py          汇报 Spec（P2）
+│       └── kpi_plan.py        KPI 计划 Spec（P2）
+└── web/                   Web UI（FastAPI + SSE + 原生前端）
+    ├── server.py            API 路由 + 静态挂载 + 后台阶段执行
+    ├── session.py           内存会话 + SSE 事件队列
+    └── static/              前端（index.html / app.js / style.css + vendor/mini-md.js）
 ```
 
 ## ✨ 核心功能
 
 - [x] 工作总结类型端到端撰写（P1）
+- [x] 汇报（结论先行 5 章）/ KPI 计划（SMART 量化 5 章）类型（P2）
 - [x] 参考材料导入与检索:RAG(Qdrant+Embedding)+ 本地兜底双后端,主动注入 + 被动召回
 - [x] 参考材料分角色:facts(事实依据)/ style(风格参考)分目录注入
 - [x] 用户反馈修订:全文统一意见 + 按章节细粒度意见,ReviewAgent 结合事实材料检索增量修订
 - [x] Web UI:撰写全流程 + 大纲确认 + 反馈修订 + 材料上传（P1.10）
 - [x] Markdown + DOCX 双格式导出
 - [x] 可扩展类型注册表
-- [ ] 汇报、KPI 计划等类型（P2）
 
 ## 🛠️ 技术栈
 

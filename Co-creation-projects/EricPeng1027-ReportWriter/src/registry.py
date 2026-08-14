@@ -53,6 +53,10 @@ def get_registry() -> DocumentTypeRegistry:
 
 def _register_builtin_types(registry: DocumentTypeRegistry) -> None:
     """注册内置材料类型"""
+    from .types.kpi_plan import KpiPlanSpec
+    from .types.report import ReportSpec
     from .types.work_summary import WorkSummarySpec
 
     registry.register(WorkSummarySpec)
+    registry.register(ReportSpec)
+    registry.register(KpiPlanSpec)
