@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReportWriter 智能材料撰写</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>📝 ReportWriter 智能材料撰写</h1>
+    <span class="subtitle">规划 → 确认大纲 → 撰写 → 评审 → 反馈修订</span>
+  </header>
+
+  <div class="app-grid">
+    <!-- 左栏：设置 + 进度 -->
+    <aside id="panel-left">
+      <section class="card" id="card-setup">
+        <h2>撰写设置</h2>
+        <label class="field">
+          <span>材料类型</span>
+          <select id="typeSelect"></select>
+        </label>
+        <div id="typePreview" class="type-preview"></div>
+        <label class="field">
+          <span>主题</span>
+          <input id="topicInput" type="text" placeholder="如：2026年Q2 研发部工作总结">
+        </label>
+
+        <div class="upload-block">
+          <span class="field-label">参考材料（可选，撰写前上传）</span>
+          <div id="uploadRow">
+            <select id="uploadScope">
+              <option value="facts">事实材料（内容依据）</option>
+              <option value="style">风格材料（只参考写法）</option>
+            </select>
+            <input id="fileInput" type="file" multiple
+                   accept=".md,.txt,.pdf,.docx,.html,.htm,.json">
+            <button id="btnUpload" type="button">上传</button>
+          </div>
+          <ul id="uploadList"></ul>
+        </div>
+
+        <button id="btnStart" class="primary" type="button">开始撰写</button>
+      </section>
+
+      <section class="card" id="card-progress">
+        <h2>进度</h2>
+        <div id="statusBadge" class="status-badge">空闲</div>
+        <div id="progressBar"><div id="progressBarInner"></div></div>
+        <ol id="progressLog"></ol>
+      </section>
+    </aside>
+
+    <!-- 右栏：大纲确认 / 成稿与反馈 -->
+    <main id="panel-right">
+      <section class="card hidden" id="card-outline">
+        <h2>确认大纲</h2>
+        <p class="hint">规划完成。可编辑标题与各章要点后确认，Agent 将按此大纲逐章撰写。</p>
+        <label class="field">
+          <span>材料标题</span>
+          <input id="outlineTitle" type="text">
+        </label>
+        <div id="outlineSections"></div>
+        <button id="btnConfirmOutline" class="primary" type="button">确认大纲，开始撰写</button>
+      </section>
+
+      <section class="card hidden" id="card-draft">
+        <h2 id="draftTitle"></h2>
+        <div class="draft-meta">
+          <span id="draftWords"></span>
+          <span id="reviseRounds"></span>
+          <span class="download-row">
+            下载：<a id="dlMarkdown" href="#">Markdown</a> ·
+            <a id="dlDocx" href="#">DOCX</a>
+          </span>
+        </div>
+        <div id="sectionsView"></div>
+
+        <div class="feedback-block">
+          <h3>修改意见</h3>
+          <label class="field">
+            <span>全局意见（对全文生效，可留空）</span>
+            <textarea id="globalFeedback" rows="3"
+                      placeholder="如：整体语气再正式一些；数据以事实材料为准"></textarea>
+          </label>
+          <p class="hint">章节专属意见请直接填在上方各章卡片下方的输入框里。</p>
+          <button id="btnRevise" class="primary" type="button">提交修改意见并修订</button>
+        </div>
+      </section>
+
+      <section class="card" id="card-welcome">
+        <h2>使用说明</h2>
+        <ol class="welcome-steps">
+          <li>左侧选择材料类型、填写主题（可先把参考材料上传到事实/风格库）</li>
+          <li>点击「开始撰写」：Agent 先规划章节大纲，完成后在右侧确认或编辑</li>
+          <li>确认大纲后 Agent 逐章撰写并自评，成稿展示在右侧，可下载 MD/DOCX</li>
+          <li>阅读后填写修改意见（全局或按章节），提交后 Agent 增量修订并重新导出</li>
+        </ol>
+      </section>
+    </main>
+  </div>
+
+  <script src="vendor/mini-md.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

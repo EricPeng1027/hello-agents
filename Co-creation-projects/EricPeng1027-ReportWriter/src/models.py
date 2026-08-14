@@ -105,6 +105,40 @@ class DocumentDraft:
 
 
 @dataclass
+class RevisionFeedback:
+    """用户修订意见
+
+    Attributes:
+        global_feedback: 全文统一意见
+        section_feedback: 按章节 key/title 的细粒度意见（WebUI 已启用）
+    """
+
+    global_feedback: str = ""
+    section_feedback: Dict[str, str] = field(default_factory=dict)
+
+    def feedback_for(self, section: SectionDraft) -> str:
+        """取某个章节适用的意见文本（全文意见 + 该章专属意见）
+
+        可能返回空字符串（该章无任何意见），由调用方决定是否跳过。
+        """
+        parts = []
+        if self.global_feedback.strip():
+            parts.append(self.global_feedback.strip())
+        sec = self.section_feedback.get(section.key) or self.section_feedback.get(
+            section.title
+        )
+        if sec and sec.strip():
+            parts.append(sec.strip())
+        return "\n".join(parts)
+
+    def is_empty(self) -> bool:
+        """全文意见与按章节意见均为空"""
+        return not self.global_feedback.strip() and not any(
+            v.strip() for v in self.section_feedback.values()
+        )
+
+
+@dataclass
 class ReviewResult:
     """评审结果"""
 

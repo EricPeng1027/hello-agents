@@ -70,6 +70,9 @@ class LocalMaterialBackend:
     # ------------------------------------------------------------------ ingest
     def ingest_file(self, file_path: str) -> str:
         p = Path(file_path)
+        # 幂等导入：同一路径不重复分块（web 场景会反复 reingest 同一目录）
+        if str(p) in self._ingested_files:
+            return f"已导入，跳过: {p.name}"
         text = self._read_text(file_path)
         if not text.strip():
             return f"文件内容为空或本地模式不支持解析: {p.name}"
@@ -79,7 +82,7 @@ class LocalMaterialBackend:
         base = len(self._chunks)
         for idx, ch in enumerate(chunks):
             self._chunks.append((ch, p.name, base + idx))
-        self._ingested_files.append(p.name)
+        self._ingested_files.append(str(p))
         return f"已导入 {len(chunks)} 个片段（本地模式）: {p.name}"
 
     # ------------------------------------------------------------------ search

@@ -187,6 +187,29 @@ REVIEWER_PROMPTS = {
 }
 
 
+# 用户反馈修订模板：用户阅读成稿后提出修改意见，Reviewer 按意见增量修订。
+# 与 reflect/refine 的区别：feedback 来自用户而非自评，且注入事实材料保证数据口径。
+REVIEWER_REVISE_PROMPT = """你是一位材料修订专家。用户审阅了以下章节并提出了修改意见，请严格落实。
+
+# 章节标题: {section_title}
+# 章节当前内容:
+{content}
+
+# 用户修改意见（适用于全文，请落实与本章相关的部分）:
+{feedback}
+
+# 事实依据（修订涉及的数据/事实/口径必须以此为准；无相关内容时保持原文数据不变）:
+{facts_materials}
+
+## 修订要求
+- 严格落实用户意见中与本章相关的部分；与本章无关的意见不要强行套用
+- 未提及的部分保持原样，不要重写全文
+- 数据/事实/口径必须与上方事实依据一致；事实依据中没有的数据不得编造
+- 保持原目标字数: {target_words} 字左右（±10%）
+- 只输出修订后的完整章节正文（Markdown格式），不要输出解释或修订说明
+"""
+
+
 def get_planner_prompts() -> dict:
     """获取 Planner 的 custom_prompts"""
     return {"planner": PLANNER_PROMPT, "executor": PLANNER_EXECUTOR_PROMPT}
@@ -208,5 +231,11 @@ def get_drafter_task_template_single() -> str:
 
 
 def get_reviewer_prompts() -> dict:
-    """获取 Reviewer 的 Reflection 自定义提示词"""
-    return REVIEWER_PROMPTS
+    """获取 Reviewer 的 Reflection 自定义提示词
+
+    在自评三件套（initial/reflect/refine）之外并入 "revise"（用户反馈修订），
+    所有使用该 getter 的 spec 自动获得用户修订能力，无需改动 types 文件。
+    """
+    prompts = dict(REVIEWER_PROMPTS)
+    prompts["revise"] = REVIEWER_REVISE_PROMPT
+    return prompts

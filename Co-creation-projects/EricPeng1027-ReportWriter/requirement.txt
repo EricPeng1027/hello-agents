@@ -12,3 +12,9 @@ markitdown>=0.0.1
 # 配置管理
 python-dotenv>=1.0.0
 pydantic-settings>=2.0.0
+
+# Web UI（python run_web.py）
+fastapi>=0.110
+uvicorn[standard]>=0.29
+sse-starlette>=2.0
+python-multipart>=0.0.9

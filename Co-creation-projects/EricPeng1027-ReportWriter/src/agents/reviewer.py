@@ -9,6 +9,7 @@ from typing import Dict
 from hello_agents import HelloAgentsLLM
 
 from ..models import DocumentTypeSpec, SectionDraft
+from ..prompts import REVIEWER_REVISE_PROMPT
 from ..utils import count_words
 from .llm_service import LLMService
 
@@ -59,6 +60,64 @@ class ReviewAgent:
             print(f"▸️  评审失败，保留原文: {e}")
             section.metadata["reviewed"] = False
             section.metadata["review_error"] = str(e)
+
+        return section
+
+    def revise_with_feedback(
+        self,
+        section: SectionDraft,
+        feedback: str,
+        spec: DocumentTypeSpec,
+        target_words: int = 0,
+        facts_materials: str = "（暂无相关参考材料）",
+    ) -> SectionDraft:
+        """按用户意见修订单个章节（单次 LLM 调用，失败保留原文）
+
+        Args:
+            section: 待修订章节
+            feedback: 用户修改意见（已由编排器按章节解析好）
+            spec: 材料类型规格
+            target_words: 章节目标字数（0 表示按原章篇幅掌握）
+            facts_materials: 事实材料检索片段，保证修订涉及的数据/口径有据可依
+        """
+        if not section.content or not section.content.strip():
+            print(f"▸ 章节为空，跳过用户修订: {section.title}")
+            return section
+
+        # 旧 spec 的 reviewer prompts 可能没有 "revise" 键，回退到默认模板
+        prompts = spec.custom_prompts.get("reviewer") or {}
+        template = prompts.get("revise") or REVIEWER_REVISE_PROMPT
+
+        print(f"\n▸ ReviewAgent 按用户意见修订章节: {section.title}")
+        try:
+            words_label = str(target_words) if target_words > 0 else "原章篇幅"
+            prompt = template.format(
+                section_title=section.title,
+                content=section.content,
+                feedback=feedback,
+                facts_materials=facts_materials,
+                target_words=words_label,
+            )
+            revised = self._invoke(prompt, spec.system_prompt)
+            if revised and revised.strip():
+                words_before = section.word_count
+                section.content = revised.strip()
+                section.word_count = count_words(section.content)
+                section.metadata["user_revised"] = True
+                section.metadata.setdefault("revision_history", []).append(
+                    {
+                        "feedback": feedback,
+                        "words_before": words_before,
+                        "words_after": section.word_count,
+                    }
+                )
+                print(f"   修订后字数: {section.word_count}（修订前 {words_before}）")
+            else:
+                print("   ▸️  修订结果为空，保留原文")
+                section.metadata["user_revision_error"] = "empty_result"
+        except Exception as e:
+            print(f"▸️  用户修订失败，保留原文: {e}")
+            section.metadata["user_revision_error"] = str(e)
 
         return section
 

@@ -1,6 +1,6 @@
 # ReportWriter 项目进展与后续 TODO
 
-> 最后更新: 2026-08-13
+> 最后更新: 2026-08-14
 > 分支: `feature/EricPeng1027-ReportWriter`
 > 位置: `Co-creation-projects/EricPeng1027-ReportWriter/`
 
@@ -121,6 +121,30 @@ EricPeng1027-ReportWriter/
 - **本地后端兜底**: 字面/2-gram 检索无命中时返回最新片段,保证"有参考"
 - 冒烟测试:双库注入 5/5 章节(facts/style 各自命中)、单库模式兼容、scope 解析正确
 
+### 3.1d ✅ 用户反馈修订(P1.9,2026-08-14 已完成)
+用户场景:阅读成稿后有修改意见,需要**不重新跑全篇、只增量修订**的反馈通道。决策(已与用户确认):
+- **粒度**: Jupyter 只做全文统一反馈(一段意见逐章应用);`RevisionFeedback.section_feedback` 为 WebUI 按章节细粒度反馈**预留**(dict 入参会 fail-fast 提示,不静默忽略)
+- **方式**: 代码调用 `draft = orchestrator.revise(draft, feedback=...)`,不做 `input()` 交互
+- **机制**: ReviewAgent + 事实材料检索——`revise_with_feedback()` 单次 LLM 调用(真实端点每章 1-2 分钟,不做多轮);修订前按 `章节标题+意见` 从 facts 库检索片段注入 prompt,保证数据/口径有据可依
+- **reingest**: 材料库是内存态,fresh session(重启内核)直接修订需 `reingest=True`(默认)重新导入;同会话多轮传 `False` 省时
+- 实现要点:
+  - `prompts.py` 新增 `REVIEWER_REVISE_PROMPT`,并入 `get_reviewer_prompts()` 的 `"revise"` 键 → **所有 spec 零改动获得能力**;旧 spec 缺键时 Reviewer 回退模块级默认模板
+  - `orchestrator.write()` 的材料导入逻辑抽为 `_ingest_materials()`,`write()`/`revise()` 共用
+  - 修订记录:章节 `metadata["revision_history"]`(意见/前后字数)+ `draft.meta["revision_rounds"]`;修订稿导出到**新时间戳目录**不覆盖原稿
+- 冒烟测试(stub LLM)9 项断言组通过:逐章单次调用/facts 注入/轮次记录/多轮/dict 报错/空意见报错/未知类型报错/对象入参
+- **顺带修复 RAG 真实 bug**: 环境的 qdrant-client 已移除 `client.search()`,导致 `RAGBackend.search()` 的 `except: return ""` 静默吞错、RAG 检索一直返回空(此前"主动注入空、recall 工具空"均由此)。已改用新旧版通用的 `query_points()`,检索恢复命中(冒烟中 facts 片段成功注入 prompt)
+
+### 3.1e ✅ Web UI(P1.10,2026-08-14 已完成)
+- **技术栈**: FastAPI + SSE(进度推送)+ 原生 HTML/JS/CSS 单页(无构建、无 CDN 依赖);`python run_web.py` → `http://127.0.0.1:8000`
+- **交互覆盖**: 撰写全流程(选类型+主题→后台跑→进度→成稿预览/下载)、**大纲确认**(规划后暂停,可编辑标题/要点再撰写)、**反馈修订**(全局+按章节细粒度——P1.9 预留的 `RevisionFeedback.section_feedback` 正式启用)、**材料上传**(facts/style,扩展名白名单复用 `loader.SUPPORTED_EXTENSIONS`,单文件 10MB 上限)
+- **编排器改造**(notebook 行为不变): `write()` 拆为 `prepare()`(导入+规划)/`draft_with_outline()`(撰写+评审+导出) + 薄封装;新增 `_emit()` 进度回调(`progress_cb` 可选参数,None 时仅打印);`revise()` 支持按章节跳过(无意见章节 `continue`);导出 paths 存入 `draft.meta["export_paths"]` 供 web 下载
+- **models.py**: `feedback_for` 启用按 key→title 匹配,可返回 ""(由编排器决定跳过),新增 `is_empty()`(全空才在入口报错)
+- **web/ 布局**: `web/server.py`(8 个 /api 端点 + 静态挂载)、`web/session.py`(内存会话 + 事件 backlog 回放 + 15s 心跳)、`web/static/`(index.html/app.js/style.css + `vendor/mini-md.js` 手写 120 行 Markdown 渲染器——公司内网屏蔽 CDN,不用 marked.js)
+- **并发与安全**: 单共享编排器 + 模块级 WRITE_LOCK(阶段线程内非阻塞获取,忙时新会话收 error 事件);大纲 key 严格校验(防改名静默丢摘要);下载路径服务端解析(防穿越);绑定 127.0.0.1
+- **幂等导入**: `local_backend.ingest_file` 跳过已导入路径(web 反复 reingest 同一目录不会重复分块);RAG point ID 本就 uuid5 幂等
+- **冒烟测试**(`_smoke_web.py`,agent 方法级 stub)11 项断言组通过;`_smoke_revise.py` 断言⑥同步更新(dict 反馈从"应报错"改为"合法且只改目标章")并回归通过
+- **踩坑记录**: ① TestClient 经 httpx `trust_env` 会读系统代理把 `http://testserver` 请求拦到 proxyza → 测试里 patch `httpx.Client.__init__` 强制 `trust_env=False`;② TestClient 的 SSE 流式响应在连接复用下不稳定 → 冒烟直接断言 `session.events` backlog 结构/seq 单调,浏览器 EventSource 路径留给手动验证;③ 锁获取/释放必须在后台阶段线程内(不能在有路由里获取后跨 await 释放)
+
 ### 3.2 🟡 环境配置补全(真实 RAG 运行前必做)
 用户 `.env` 里以下两组还是占位符:
 ```bash
@@ -143,7 +167,7 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ### 3.4 🟢 P3 及以后
 - [x] ~~本地后端兜底(无 Qdrant 时用关键词/章节匹配,`material_mode="local"`)~~ —— P1.6 已实现 `local_backend.py` + `auto` 模式
 - [ ] 数据表读取/图表生成工具,支撑数据型材料
-- [ ] 多轮交互式撰写(用户对大纲/章节反馈后增量修订)
+- [ ] 多轮交互式撰写(~~全局反馈~~ P1.9、~~按章节细粒度~~ P1.10 已落地;对话式交互待 WebUI 聊天形态)
 - [ ] Planner/Drafter 的提示词调优(尤其 ReAct 的 `Finish[JSON]` 稳定性)
 - [ ] 评审打分维度落地(`ReviewResult` 目前未真正填充分数)
 
@@ -176,5 +200,7 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 - [x] **P1.6 运行验证**: 冒烟测试通过 + 本地兜底后端 + 回退清洗/trace 关闭(2026-08-13)
 - [x] **P1.7 真实环境验证**: 修复 .env(/v1 后缀 + NO_PROXY 绕过公司代理),真实 LLM 全链路跑通,5 章 2102 字 + MD/DOCX 导出(2026-08-14)
 - [x] **P1.8 参考材料分角色**: facts/style 双库目录 + prompt 双区块注入 + recall_material scope 参数(2026-08-14)
+- [x] **P1.9 用户反馈修订**: `orchestrator.revise(draft, feedback)` 全文统一意见逐章修订 + facts 检索注入 + reingest;修复 qdrant-client `search()` 已移除导致 RAG 静默返回空(2026-08-14)
+- [x] **P1.10 Web UI**: FastAPI+SSE+原生前端;撰写/大纲确认/反馈修订(按章节)/材料上传;编排器拆分 prepare/draft_with_outline + 进度回调;WRITE_LOCK 串行化(2026-08-14)
 - [ ] P2: 补汇报、KPI 计划类型 Spec
 - [ ] P3: 交互式撰写 / 工具扩展 / 评审打分落地

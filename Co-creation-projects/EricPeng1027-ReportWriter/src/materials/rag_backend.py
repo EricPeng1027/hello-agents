@@ -204,17 +204,20 @@ class RAGBackend:
             return ""
         try:
             vec = self._embed([query])[0]
-        except Exception as e:
-            return f""
+        except Exception:
+            return ""
 
         try:
-            hits = self._client.search(
+            # qdrant-client >= 1.10 移除了 search()，query_points() 为新旧版通用接口
+            resp = self._client.query_points(
                 collection_name=self.collection,
-                query_vector=vec,
+                query=vec,
                 limit=top_k,
+                with_payload=True,
             )
-        except Exception as e:
-            return f""
+            hits = resp.points
+        except Exception:
+            return ""
 
         results = []
         for h in hits:
