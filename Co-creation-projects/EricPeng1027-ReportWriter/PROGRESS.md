@@ -157,8 +157,16 @@ EricPeng1027-ReportWriter/
 - **目录结构**：`data/<type_id>/facts|style`（如 `data/work_summary/facts/`）；Spec 新增 `material_base_dir` 字段（三个内置类型已配为各自 type_id）；历史 `data/facts|style` 文件已迁移到 `work_summary` 下
 - **检索隔离**：scope 从 `facts` 升级为 `"<type_id>:facts"` 命名空间，`MaterialManager._get_backend` 惰性派生独立后端（RAG collection 形如 `reportwriter_vectors_reportwriter_web_work_summary_facts`）；`recall_material` 在 `prepare()` 后按当前类型重注册（default_scope 带类型），`read_data_table` 查找范围扩展到各类型子目录
 - **管理 API**：`GET /api/materials[?type_id=]`（清单，含大小/修改时间/后端模式）、`POST /api/materials/upload`（必带 `type_id`，写入对应类型目录）、`DELETE /api/materials/{type}/{scope}/{file}`（basename 校验防穿越）、`POST /api/materials/reingest[?type_id=]`（按类型把磁盘材料导入检索库，幂等）
-- **管理页面**：左侧新增「🗂 材料管理」面板（类型筛选、表格列出类型/库/文件/大小、删除按钮、「同步到检索库」按钮）；上传控件标注"上传到当前所选类型"
+- **管理页面**：左侧新增「🗂 材料管理」面板（类型筛选、表格列出类型/库/文件/大小、删除按钮、「同步到检索库」按钮）；上传控件标注"上传到当前所选类型"（**2026-08-17 已改为顶部导航独立视图**，见 3.4c）
 - **验证**：真实 RAG 类型专属库检索命中（`work_summary:facts` 正确召回 q2_data）；类型间隔离确认（`report:facts` 检索不到 work_summary 材料）；`_smoke_p3.py` 扩展至 **40 项断言**（新增用例6 分目录隔离 5 项 + 用例7 管理 API 10 项，含路径穿越/未知类型/重复删除边界）
+
+### 3.4c ✅ 前端美化：顶部导航分功能区（2026-08-17 已完成）
+用户反馈：功能区（撰写/材料管理）堆在左栏卡片里层次不清。已重构为**顶部导航栏**形态：
+- **导航栏**：吸顶 header 内置「✍️ 撰写工作台 / 🗂 材料管理」两个 tab，右侧常驻状态徽章（从进度卡挪到 header，任何视图可见）；tab 切换带 fadeIn 过渡
+- **撰写工作台视图**：保持原有左右双栏（设置/对话/进度 + 大纲/成稿），「🗂 材料管理」按钮从设置卡移除
+- **材料管理视图**：独立整页（最大宽度 1000px 居中），页面头部 = 标题 + 类型筛选 + 同步按钮一排；新增**上传区**（类型 + 事实/风格 + 文件选择一体，摆脱对左栏上传控件的依赖）；材料表格美化（表头底色、行 hover、facts/style 彩色 scope 标签）
+- **样式升级**：CSS 变量统一配色（--brand/--ok/--warn/--err）、按钮/卡片过渡、上传区虚线框、移动端 header 折行适配
+- **验证**：40 项冒烟断言回归全过；TestClient 确认 `/`、`/style.css`、`/app.js` 均含新导航结构
 
 ### 3.4 🟢 P3 及以后
 - [x] ~~本地后端兜底(无 Qdrant 时用关键词/章节匹配,`material_mode="local"`)~~ —— P1.6 已实现 `local_backend.py` + `auto` 模式
@@ -211,4 +219,5 @@ EricPeng1027-ReportWriter/
 - [x] **P3.4 ReAct 稳定性**: 提示词硬规则 + `_salvage_action` 解析挽救 + 循环调用检测,真实 LLM 一轮 Finish 验证通过(2026-08-17)
 - [x] **P3.5 冒烟测试**: `_smoke_p3.py` 25 项断言组通过(数据表/打分/ReAct 解析/端到端 stub write 带评分/对话式 API)(2026-08-17)
 - [x] **P3.6 材料按类型分目录 + 管理页面**: Spec 加 `material_base_dir`(data/<type>/facts|style),scope 升级为 `"<type>:facts"` 命名空间实现检索隔离;管理 API(列表/上传带类型/删除防穿越/幂等 reingest)+ 前端管理面板;冒烟扩展至 40 项断言全过(2026-08-17)
+- [x] **P3.7 前端美化**: 顶部吸顶导航分「撰写工作台 / 材料管理」两视图,状态徽章挪入 header;材料管理独立整页(自带上传区/筛选/表格/同步);CSS 变量统一配色(2026-08-17)
 - [ ] P4: 图表生成工具 / 其余按需扩展

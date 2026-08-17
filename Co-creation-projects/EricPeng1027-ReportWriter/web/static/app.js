@@ -35,6 +35,7 @@ let sessionId = null;
 let es = null;
 let lastSeq = 0;
 let typesCache = [];
+let currentView = "write"; // write | materials
 
 // ------------------------------------------------------------ DOM 快捷方式
 const $ = (id) => document.getElementById(id);
@@ -70,13 +71,24 @@ const els = {
   btnChatStart: $("btnChatStart"),
   btnChatSend: $("btnChatSend"),
   btnChatGenerate: $("btnChatGenerate"),
-  cardMaterials: $("card-materials"),
   materialTypeFilter: $("materialTypeFilter"),
+  matUploadType: $("matUploadType"),
   materialsList: $("materialsList"),
   materialsMsg: $("materialsMsg"),
-  btnMaterials: $("btnMaterials"),
   btnReingest: $("btnReingest"),
+  navBtns: document.querySelectorAll(".nav-btn"),
+  viewWrite: $("view-write"),
+  viewMaterials: $("view-materials"),
 };
+
+// ------------------------------------------------------------ 视图切换（导航）
+function switchView(view) {
+  currentView = view;
+  els.navBtns.forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  els.viewWrite.classList.toggle("hidden", view !== "write");
+  els.viewMaterials.classList.toggle("hidden", view !== "materials");
+  if (view === "materials") loadMaterials();
+}
 
 // ------------------------------------------------------------ 状态切换
 function setState(next, errMsg) {
@@ -103,10 +115,6 @@ function setState(next, errMsg) {
     "hidden",
     !(next === S.IDLE || next === S.ERROR)
   );
-  // 材料管理面板只在空闲态可开合（撰写中避免分心）
-  if (next !== S.IDLE && next !== S.ERROR) {
-    els.cardMaterials.classList.add("hidden");
-  }
 
   if (next === S.ERROR && errMsg) appendLog({ stage: "error", message: errMsg });
 }
@@ -150,6 +158,7 @@ async function loadTypes() {
     .join("");
   els.typeSelect.innerHTML = options;
   els.materialTypeFilter.innerHTML = `<option value="">全部类型</option>` + options;
+  els.matUploadType.innerHTML = options;
   renderTypePreview();
 }
 
@@ -173,7 +182,10 @@ async function uploadFiles() {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
   fd.append("scope", els.uploadScope.value);
-  fd.append("type_id", els.typeSelect.value);
+  // 上传目标类型：撰写页取左侧所选类型；材料管理页取管理页类型选择器
+  const typeId =
+    currentView === "materials" ? els.matUploadType.value : els.typeSelect.value;
+  fd.append("type_id", typeId);
   els.btnUpload.disabled = true;
   try {
     const res = await api("/materials/upload", { method: "POST", body: fd });
@@ -467,12 +479,6 @@ function fmtSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + " MB";
 }
 
-async function toggleMaterialsPanel() {
-  const show = els.cardMaterials.classList.contains("hidden");
-  els.cardMaterials.classList.toggle("hidden", !show);
-  if (show) await loadMaterials();
-}
-
 async function loadMaterials() {
   const tid = els.materialTypeFilter.value;
   const q = tid ? `?type_id=${encodeURIComponent(tid)}` : "";
@@ -489,7 +495,7 @@ function renderMaterials(items) {
     .map(
       (m) => `<tr>
         <td>${escapeHtml(m.type_name)}</td>
-        <td>${m.scope === "facts" ? "事实库" : "风格库"}</td>
+        <td><span class="scope-tag ${m.scope}">${m.scope === "facts" ? "事实库" : "风格库"}</span></td>
         <td>${escapeHtml(m.filename)}</td>
         <td>${fmtSize(m.size)}</td>
         <td><button class="mat-del" data-type="${escapeAttr(m.type_id)}"
@@ -559,9 +565,11 @@ els.btnRevise.addEventListener("click", submitRevise);
 els.btnChatStart.addEventListener("click", startChat);
 els.btnChatSend.addEventListener("click", () => sendChatMessage(false));
 els.btnChatGenerate.addEventListener("click", () => sendChatMessage(true));
-els.btnMaterials.addEventListener("click", toggleMaterialsPanel);
 els.btnReingest.addEventListener("click", reingestMaterials);
 els.materialTypeFilter.addEventListener("change", loadMaterials);
+els.navBtns.forEach((b) =>
+  b.addEventListener("click", () => switchView(b.dataset.view))
+);
 els.chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
