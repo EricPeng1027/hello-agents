@@ -13,32 +13,36 @@
       <span class="subtitle">智能材料撰写工作台</span>
     </div>
     <nav class="main-nav">
-      <button class="nav-btn active" data-view="write" type="button">✍️ 撰写工作台</button>
+      <button class="nav-btn active" data-view="write" type="button">✍️ 智能撰写</button>
       <button class="nav-btn" data-view="materials" type="button">🗂 材料管理</button>
+      <button class="nav-btn" data-view="typeconfig" type="button">⚙️ 类型配置</button>
     </nav>
     <div class="header-right">
       <span id="statusBadge" class="status-badge">空闲</span>
     </div>
   </header>
 
-  <!-- ============ 视图：撰写工作台 ============ -->
-  <div class="view app-grid" id="view-write">
-    <!-- 左栏：设置 + 进度 -->
-    <aside id="panel-left">
+  <!-- ============ 视图：智能撰写（单页全流程） ============ -->
+  <div class="view" id="view-write">
+    <main class="write-column">
+
+      <!-- 设置卡：类型/主题/上传/开始方式 -->
       <section class="card" id="card-setup">
         <h2>撰写设置</h2>
-        <label class="field">
-          <span>材料类型</span>
-          <select id="typeSelect"></select>
-        </label>
+        <div class="setup-grid">
+          <label class="field">
+            <span>材料类型</span>
+            <select id="typeSelect"></select>
+          </label>
+          <label class="field">
+            <span>主题</span>
+            <input id="topicInput" type="text" placeholder="如：2026年Q2 研发部工作总结">
+          </label>
+        </div>
         <div id="typePreview" class="type-preview"></div>
-        <label class="field">
-          <span>主题</span>
-          <input id="topicInput" type="text" placeholder="如：2026年Q2 研发部工作总结">
-        </label>
 
         <div class="upload-block">
-          <span class="field-label">参考材料（可选，撰写前上传到当前所选类型）</span>
+          <span class="field-label">参考材料（可选，上传到当前所选类型）</span>
           <div id="uploadRow">
             <select id="uploadScope">
               <option value="facts">事实材料（内容依据）</option>
@@ -52,14 +56,18 @@
         </div>
 
         <div class="start-actions">
-          <button id="btnStart" class="primary" type="button">开始撰写</button>
-          <button id="btnChatStart" type="button" class="secondary-btn">💬 对话式撰写</button>
+          <button id="btnStart" class="primary" type="button">开始撰写（直接生成大纲）</button>
+          <button id="btnChatStart" type="button" class="secondary-btn">💬 对话式撰写（先聊清需求）</button>
         </div>
       </section>
 
+      <!-- 对话澄清卡：对话式撰写时展开（通栏聊天体验） -->
       <section class="card hidden" id="card-chat">
-        <h2>对话式撰写</h2>
-        <p class="hint">用几轮对话明确需求，我会提炼主题并追问关键信息；确认后进入大纲规划。</p>
+        <div class="chat-head">
+          <h2>💬 需求澄清</h2>
+          <span id="chatTopicBanner" class="chat-topic-banner hidden"></span>
+        </div>
+        <p class="hint">用几轮对话明确需求，我会提炼主题并追问关键信息；确认后自动进入大纲规划。</p>
         <div id="chatMessages"></div>
         <div id="chatInputRow">
           <textarea id="chatInput" rows="2" placeholder="如：帮我写一份 2026 年 Q2 研发部的工作总结，重点写交付和质量"></textarea>
@@ -70,15 +78,19 @@
         </div>
       </section>
 
-      <section class="card" id="card-progress">
-        <h2>进度</h2>
-        <div id="progressBar"><div id="progressBarInner"></div></div>
-        <ol id="progressLog"></ol>
+      <!-- 欢迎卡：空闲时显示 -->
+      <section class="card" id="card-welcome">
+        <h2>使用说明</h2>
+        <ol class="welcome-steps">
+          <li>选择材料类型（各类型材料独立存放：data/&lt;类型&gt;/facts|style），可先把参考材料上传到当前类型的库（支持 CSV/XLSX 数据表）</li>
+          <li>「开始撰写」直接生成大纲；「💬 对话式撰写」先用几轮对话明确需求再生成</li>
+          <li>Agent 规划章节大纲后在此确认或编辑，随后逐章撰写并自评打分</li>
+          <li>成稿含各章评分，可下载 MD/DOCX；填写修改意见可增量修订</li>
+          <li>「🗂 材料管理」查看/删除/同步材料；「⚙️ 类型配置」自定义章节骨架与提示词</li>
+        </ol>
       </section>
-    </aside>
 
-    <!-- 右栏：大纲确认 / 成稿与反馈 -->
-    <main id="panel-right">
+      <!-- 大纲确认卡 -->
       <section class="card hidden" id="card-outline">
         <h2>确认大纲</h2>
         <p class="hint">规划完成。可编辑标题与各章要点后确认，Agent 将按此大纲逐章撰写。</p>
@@ -90,6 +102,7 @@
         <button id="btnConfirmOutline" class="primary" type="button">确认大纲，开始撰写</button>
       </section>
 
+      <!-- 成稿与反馈卡 -->
       <section class="card hidden" id="card-draft">
         <h2 id="draftTitle"></h2>
         <div class="draft-meta">
@@ -114,16 +127,13 @@
         </div>
       </section>
 
-      <section class="card" id="card-welcome">
-        <h2>使用说明</h2>
-        <ol class="welcome-steps">
-          <li>左侧选择材料类型（各类型材料独立存放：data/&lt;类型&gt;/facts|style），可先把参考材料上传到当前类型的库（支持 CSV/XLSX 数据表）</li>
-          <li>点击「开始撰写」直接生成；或点「💬 对话式撰写」用几轮对话明确需求后再生成</li>
-          <li>Agent 先规划章节大纲，完成后在右侧确认或编辑，随后逐章撰写并自评打分</li>
-          <li>成稿展示在右侧（含各章评分），可下载 MD/DOCX；填写修改意见可增量修订</li>
-          <li>顶部导航切到「🗂 材料管理」可查看/删除/同步各类型材料</li>
-        </ol>
+      <!-- 进度卡：常驻页尾 -->
+      <section class="card" id="card-progress">
+        <h2>进度</h2>
+        <div id="progressBar"><div id="progressBarInner"></div></div>
+        <ol id="progressLog"></ol>
       </section>
+
     </main>
   </div>
 
@@ -145,20 +155,106 @@
         <h3>上传新材料</h3>
         <div id="matUploadRow">
           <select id="matUploadType"></select>
-          <select id="uploadScope">
+          <select id="matUploadScope">
             <option value="facts">事实材料（内容依据）</option>
             <option value="style">风格材料（只参考写法）</option>
           </select>
-          <input id="fileInput" type="file" multiple
+          <input id="matFileInput" type="file" multiple
                  accept=".md,.txt,.pdf,.docx,.html,.htm,.json,.csv,.xlsx">
-          <button id="btnUpload" type="button" class="primary-inline">上传</button>
+          <button id="btnMatUpload" type="button" class="primary-inline">上传</button>
         </div>
-        <ul id="uploadList"></ul>
+        <ul id="matUploadList"></ul>
       </div>
 
       <div id="materialsList"></div>
       <div id="materialsMsg" class="hint"></div>
     </section>
+  </div>
+
+  <!-- ============ 视图：类型配置（类型管理器） ============ -->
+  <div class="view hidden" id="view-typeconfig">
+    <section class="card" id="card-typeconfig">
+      <div class="mat-head">
+        <div>
+          <h2>⚙️ 类型结构配置</h2>
+          <p class="hint">内置类型可改名/改章节/删除（可恢复）；自定义类型全量定义在 config/custom_types/。保存后立即生效。</p>
+        </div>
+        <div class="mat-toolbar">
+          <select id="tcTypeSelect"></select>
+          <span id="tcOriginBadge" class="tc-badge tc-origin hidden">自定义</span>
+          <span id="tcBadge" class="tc-badge hidden">已覆盖</span>
+          <button id="btnTcNew" type="button" class="primary-inline">＋ 新建类型</button>
+        </div>
+      </div>
+
+      <div class="setup-grid">
+        <label class="field">
+          <span>类型标识（type_id，不可改）</span>
+          <input id="tcTypeId" type="text" disabled>
+        </label>
+        <label class="field">
+          <span>显示名称</span>
+          <input id="tcName" type="text" placeholder="如：工作总结">
+        </label>
+      </div>
+
+      <label class="field">
+        <span>角色设定（system prompt）</span>
+        <textarea id="tcSystemPrompt" rows="3"></textarea>
+      </label>
+      <label class="field">
+        <span>参考材料使用说明（material role hint）</span>
+        <textarea id="tcRoleHint" rows="2"></textarea>
+      </label>
+
+      <h3>章节骨架</h3>
+      <table class="tc-table" id="tcTable">
+        <thead>
+          <tr><th>章节标识</th><th>标题</th><th>目标字数</th><th>写作要点（hints）</th><th></th></tr>
+        </thead>
+        <tbody id="tcSections"></tbody>
+      </table>
+      <button id="btnTcAddSection" type="button" class="secondary-btn tc-add">＋ 添加章节</button>
+
+      <div class="tc-actions">
+        <button id="btnTcSave" class="primary-inline" type="button">保存配置</button>
+        <button id="btnTcReset" type="button">恢复默认</button>
+        <button id="btnTcDelete" type="button" class="tc-del">删除类型</button>
+        <span id="tcMsg" class="hint"></span>
+      </div>
+    </section>
+
+    <!-- 新建类型弹层 -->
+    <div id="tcNewModal" class="modal hidden">
+      <div class="modal-card">
+        <h3>新建材料类型</h3>
+        <p class="hint">范式/工具/材料模式沿用系统默认；创建后可在上方继续编辑章节与提示词。</p>
+        <label class="field">
+          <span>类型标识（小写字母/数字/下划线，字母开头）</span>
+          <input id="tcNewId" type="text" placeholder="如 monthly_report">
+        </label>
+        <label class="field">
+          <span>显示名称</span>
+          <input id="tcNewName" type="text" placeholder="如：月度汇报">
+        </label>
+        <label class="field">
+          <span>角色设定（可留空用通用默认）</span>
+          <textarea id="tcNewSystemPrompt" rows="2" placeholder="你是一位资深的……撰写专家"></textarea>
+        </label>
+        <h4>初始章节（至少一章，后续可改）</h4>
+        <table class="tc-table">
+          <thead>
+            <tr><th>章节标识</th><th>标题</th><th>目标字数</th><th>写作要点</th><th></th></tr>
+          </thead>
+          <tbody id="tcNewSections"></tbody>
+        </table>
+        <button id="btnTcNewAddSection" type="button" class="secondary-btn tc-add">＋ 添加章节</button>
+        <div class="modal-actions">
+          <button id="btnTcNewCreate" class="primary-inline" type="button">创建</button>
+          <button id="btnTcNewCancel" type="button">取消</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="vendor/mini-md.js"></script>

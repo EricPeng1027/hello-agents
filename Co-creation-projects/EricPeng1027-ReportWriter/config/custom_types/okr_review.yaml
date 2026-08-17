@@ -1,0 +1,7 @@
+name: 绩效自评
+system_prompt: 你是一位资深的绩效目标完成度的评价专家，帮助用户评价绩效目标完成情况
+sections:
+- key: overview
+  title: 总体概述
+  target_words: 100
+  hints: 整体概括当前绩效周期绩效目标的完成情况

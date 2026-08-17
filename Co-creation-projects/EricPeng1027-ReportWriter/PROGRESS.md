@@ -168,6 +168,36 @@ EricPeng1027-ReportWriter/
 - **样式升级**：CSS 变量统一配色（--brand/--ok/--warn/--err）、按钮/卡片过渡、上传区虚线框、移动端 header 折行适配
 - **验证**：40 项冒烟断言回归全过；TestClient 确认 `/`、`/style.css`、`/app.js` 均含新导航结构
 
+### 3.5 ✅ P5：类型结构可配置 + 对话式撰写独立页面（2026-08-17 已完成）
+用户两个改进点：①每种类型的章节骨架/提示词应可配置、未配置走默认；②对话式撰写不该挤在左栏小卡片。
+- **YAML 覆盖层**：新增 `src/type_config.py`——`config/types/<type_id>.yaml` 只存用户覆盖字段（diff 式，不写全量默认）；可覆盖项限纯数据（`system_prompt`/`material_role_hint`/`word_count_total`/`sections` 整体替换），机制字段（paradigm/tools/material_*）不开放；`save/load/delete` + 校验（章节 key 唯一、字数正整数等，非法抛 `TypeConfigError`）
+- **registry 加载/热更新**：注册表留档内置默认 `_defaults`；`get_registry()` 注册内置后 `apply_overrides_from_disk()` 套用覆盖（非法 YAML/未注册类型仅告警跳过，不影响内置）；`refresh_type(type_id)` 供 web 保存/删除后就地热更新，**编排器/Agent/web 零改动**获得覆盖后结构
+- **配置 API**：`GET/PUT/DELETE /api/types/{type_id}/config`——GET 返回生效值+`is_overridden`+内置默认（编辑器对照用）；PUT 校验后写 YAML 并热更新；DELETE 删 YAML 回退默认；PUT/DELETE 走 WRITE_LOCK 与撰写互斥；`config/types/README.md` 说明格式
+- **Web 类型配置编辑器**：顶部导航新增「⚙️ 类型配置」视图——角色设定/材料说明文本域 + 章节表格（标识/标题/字数/要点，增删行、上移下移）、已覆盖角标、保存/恢复默认；保存后 `loadTypes()` 刷新章节预览
+- **对话式撰写独立页面**：`card-chat` 从左栏移除，新增整页视图 `view-chat`（单列居中 820px，消息区 flex 撑满、输入区贴底、页内类型选择器、choosing 时主题横幅）；撰写页「💬 对话式撰写」按钮改为切视图并预填类型/首条消息；SSE 收到 `start` 事件自动切回撰写工作台看进度（大纲确认/成稿都在那边）
+- **冒烟** `_smoke_p5.py` 33 项断言全过（YAML 读写删/非法配置兜底/API 三端点+热更新/前端静态资源一致性）；P3 40 项回归全过
+
+### 3.6 ✅ P5.1：撰写工作台与对话撰写合并为单页流程（2026-08-17 已完成）
+用户反馈：两个功能区重复（类型选择器、主题、入口、进度割裂）。已合并为**单页智能撰写**：
+- **导航收敛为三项**：✍️ 智能撰写 / 🗂 材料管理 / ⚙️ 类型配置；独立 `view-chat` 移除
+- **单页按状态显隐的流程卡**：设置卡（类型+主题一行 grid，「开始撰写」与「💬 对话式撰写」并排两个入口）→ 对话澄清卡（通栏，choosing 时显示主题横幅）→ 大纲确认卡 → 成稿与反馈卡；**进度卡常驻页尾**（任何状态可见，对话期也能看日志）
+- **设置卡生命周期**：流程启动（clarifying/writing/…）即收起，完成/出错回到 idle/error 恢复——从交互上防重复发起
+- **事件不再切视图**：SSE `start`/`outline_ready`/`done` 仅驱动 `setState()` 显隐卡片，视线不跳页
+- **顺手修复存量 bug**：材料管理页上传控件与撰写页 **DOM id 重复**（`fileInput`/`uploadScope`/`btnUpload`/`uploadList`，`getElementById` 恒中首个 → 管理页上传失效）。控件改名 `mat*` 前缀，上传逻辑抽 `uploadFilesTo({files,scope,typeId,listEl,btn,inputEl})` 两处复用
+- **验证**：`_smoke_p5.py` 用例4 重写（35 断言全过，含 id 唯一性断言）；P3 40 项回归全过；TestClient 实查三视图装配
+
+### 3.7 ✅ P5.2：材料类型完全动态化（2026-08-17 已完成）
+用户要求：类型本身（不止结构）也应可动态配置；内置三类型只是默认，同样可改可删。
+- **三层类型来源**（registry 统一聚合，编排器/Agent/web 依旧零改动）：
+  1. 内置 `src/types/*.py`（带专属提示词的专家型类型）
+  2. **自定义** `config/custom_types/<type_id>.yaml` 全量定义——`name`+`sections` 必填，`build_custom_spec()` 派生系统默认（plan_solve + recall_material + rag/auto + 通用撰写专家 system_prompt + 通用 prompts），`material_base_dir=type_id` 自动获得材料目录隔离与上传/管理/RAG 检索全套能力
+  3. **覆盖** `config/types/<type_id>.yaml`（diff 式）对内置/自定义一视同仁，且覆盖字段新增 **`name`（改名）**
+- **内置删除**：`config/types/_deleted.yaml` 标记隐藏；`_defaults` 留档 → `restore_builtin()` 可恢复；磁盘材料目录始终保留
+- **registry 扩展**：`register_custom/unregister/delete_type/restore_builtin/is_custom`；启动加载顺序=内置注册→删除标记→自定义→覆盖（自定义 id 撞内置时跳过保内置）
+- **API**：`POST /api/types`（201，type_id 形态校验小写字母开头/≤40 字符，重复 409）+ `DELETE /api/types/{id}`（返回 kind=custom|builtin）；`/api/types` 与 config 序列化带 `origin` 字段；增删走 WRITE_LOCK
+- **前端类型管理器**（类型配置页升级）：type_id（只读）+显示名称编辑、「＋ 新建类型」弹层（标识/名称/角色/初始章节）、「删除类型」（内置弹"可恢复"提示、自定义弹"定义删除"提示）、自定义/已覆盖双角标、「恢复默认」按覆盖态禁用
+- **冒烟** 用例5/6/7 新增（自定义生命周期/内置删除恢复/API 增删），**63 项断言全过**；P3 40 项回归全过
+
 ### 3.4 🟢 P3 及以后
 - [x] ~~本地后端兜底(无 Qdrant 时用关键词/章节匹配,`material_mode="local"`)~~ —— P1.6 已实现 `local_backend.py` + `auto` 模式
 - [x] **数据表读取工具**（P3.1，2026-08-17）：`src/tools/read_data_table.py`（`read_data_table`），Drafter 在 ReAct 循环中可调，读取 `data/facts|style` 下的 CSV/XLSX 返回 Markdown 表（截断保护：50 行/12 列/单元格 80 字符/总长 3000 字符）；支持 `read_data_table[文件]` 全表、`[文件][关键词]` 行过滤、`[文件][列=值]` 精确过滤；`.csv`/`.xlsx` 已并入 `loader.SUPPORTED_EXTENSIONS`，Web 上传同步放开；路径只取 basename 防穿越；XLSX 依赖 openpyxl，未装时返回明确提示不中断 ReAct
@@ -183,7 +213,9 @@ EricPeng1027-ReportWriter/
 | 想做什么 | 看哪里 |
 |---|---|
 | 改流水线/加步骤 | `src/orchestrator.py` |
-| 加新材料类型 | `src/types/`(新建文件)+ `src/registry.py`(注册) |
+| 加新材料类型(不写代码) | Web「⚙️ 类型配置」→「＋ 新建类型」,或 `config/custom_types/<type_id>.yaml` 全量定义 |
+| 加内置类型(带专属提示词) | `src/types/`(新建文件)+ `src/registry.py`(注册) |
+| 改某类型的章节/提示词(不改代码) | Web「⚙️ 类型配置」页 或 `config/types/<type_id>.yaml`(覆盖机制见 `src/type_config.py`) |
 | 参考类型 Spec 写法 | `src/types/work_summary.py` / `report.py` / `kpi_plan.py` |
 | 改某范式的提示词 | `src/prompts.py` + `src/types/work_summary.py` 的 `custom_prompts` |
 | 调 RAG 检索/导入 | `src/materials/rag_backend.py`、`src/materials/manager.py` |
@@ -220,4 +252,7 @@ EricPeng1027-ReportWriter/
 - [x] **P3.5 冒烟测试**: `_smoke_p3.py` 25 项断言组通过(数据表/打分/ReAct 解析/端到端 stub write 带评分/对话式 API)(2026-08-17)
 - [x] **P3.6 材料按类型分目录 + 管理页面**: Spec 加 `material_base_dir`(data/<type>/facts|style),scope 升级为 `"<type>:facts"` 命名空间实现检索隔离;管理 API(列表/上传带类型/删除防穿越/幂等 reingest)+ 前端管理面板;冒烟扩展至 40 项断言全过(2026-08-17)
 - [x] **P3.7 前端美化**: 顶部吸顶导航分「撰写工作台 / 材料管理」两视图,状态徽章挪入 header;材料管理独立整页(自带上传区/筛选/表格/同步);CSS 变量统一配色(2026-08-17)
+- [x] **P5 类型结构可配置 + 对话独立页**: `config/types/*.yaml` diff 式覆盖(章节骨架/角色提示,机制字段不开放)+ registry 热更新 + 配置 API(三端点)+ Web 类型配置编辑器;对话式撰写从侧栏卡片升级为整页视图,就绪后自动切回工作台;`_smoke_p5.py` 33 断言全过(2026-08-17)
+- [x] **P5.1 撰写/对话合并单页**: 导航收敛三项(智能撰写/材料管理/类型配置),设置→对话澄清→大纲→成稿按状态显隐的流程卡,进度卡常驻页尾,设置卡启动即收起;修复材料页上传控件与撰写页 DOM id 重复导致上传失效(改名 mat* + uploadFilesTo 复用);`_smoke_p5.py` 35 断言全过(2026-08-17)
+- [x] **P5.2 类型完全动态化**: 三层来源(内置 types/*.py + 自定义 config/custom_types/*.yaml 全量定义 + config/types/*.yaml diff 覆盖含改名);内置可删除(_deleted.yaml 标记,可恢复)与自定义可删(删定义);`POST/DELETE /api/types`;类型配置页升级管理器(新建弹层/删除/改名/双角标);冒烟 63 断言全过(2026-08-17)
 - [ ] P4: 图表生成工具 / 其余按需扩展

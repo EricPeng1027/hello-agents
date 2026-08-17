@@ -1,0 +1,7 @@
+name: 绩效目标
+system_prompt: 你是一位资深的绩效目标设置专家，负责帮助用户设立合理的绩效目标
+sections:
+- key: overview
+  title: 总体概述
+  target_words: 100
+  hints: 概括该绩效周期内的总体工作目标

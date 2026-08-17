@@ -64,17 +64,23 @@ body {
 .view { animation: fadeIn 0.2s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
 
-.app-grid {
-  display: grid;
-  grid-template-columns: 340px 1fr;
+/* 智能撰写：单列流程卡（设置 → 对话/大纲 → 成稿 → 进度常驻页尾） */
+#view-write { padding: 16px 24px; }
+.write-column {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
-  padding: 16px 24px;
-  max-width: 1400px;
+  max-width: 960px;
   margin: 0 auto;
-  align-items: start;
+  align-items: stretch;
+}
+.setup-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 12px;
+  align-items: end;
 }
 #view-materials { max-width: 1000px; margin: 0 auto; padding: 16px 24px; }
-#panel-left { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 76px; }
 
 .card {
   background: var(--card);
@@ -149,8 +155,10 @@ button.primary:hover:not(:disabled) { background: #1a5fd7; }
 #uploadList { list-style: none; margin-top: 8px; font-size: 12px; }
 #uploadList li { padding: 2px 0; }
 
-.start-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-.secondary-btn { width: 100%; background: #f6f8fa; }
+.start-actions { display: flex; gap: 10px; margin-top: 8px; }
+.start-actions .primary { flex: 1; }
+.start-actions .secondary-btn { flex: 1; width: auto; }
+.secondary-btn { background: #f6f8fa; }
 
 /* ---- 状态徽章 ---- */
 .status-badge {
@@ -356,12 +364,105 @@ button.primary:hover:not(:disabled) { background: #1a5fd7; }
 }
 .mat-del:hover { background: #ffebe9; }
 
+/* ---- 对话式撰写（撰写页内澄清卡，通栏） ---- */
+.chat-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.chat-head h2 { margin-bottom: 0; }
+.chat-topic-banner {
+  background: #ddf4ff;
+  color: #0969da;
+  border-radius: 999px;
+  padding: 3px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#chatMessages {
+  max-height: 380px;
+  min-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 12px;
+  padding: 10px;
+  background: #f8fafc;
+  border-radius: 10px;
+}
+
+/* ---- 类型配置 ---- */
+#view-typeconfig { max-width: 1080px; margin: 0 auto; padding: 16px 24px; }
+.tc-badge {
+  display: inline-block;
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #fff3cd;
+  color: var(--warn);
+}
+.tc-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+.tc-table th, .tc-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.tc-table th { color: var(--text-2); font-weight: 600; font-size: 12px; background: #f6f8fa; }
+.tc-table input[type="text"], .tc-table input[type="number"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tc-table input[type="number"] { width: 80px; }
+.tc-table td.tc-key { width: 140px; }
+.tc-table td.tc-title { width: 160px; }
+.tc-table td.tc-words { width: 90px; }
+.tc-table td.tc-ops { width: 110px; white-space: nowrap; }
+.tc-ops button { padding: 2px 8px; font-size: 12px; margin-right: 4px; }
+.tc-del { color: var(--err); border-color: #cf222e44; background: #fff; }
+.tc-del:hover { background: #ffebe9; }
+.tc-add { width: auto; margin: 6px 0 14px; }
+.tc-actions { display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--border); padding-top: 14px; }
+.tc-actions .hint { margin: 0; }
+.tc-origin { background: #fbefff; color: var(--brand-2); }
+
+/* ---- 弹层（新建类型） ---- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 35, 40, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px;
+  z-index: 100;
+}
+.modal-card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 20px 22px;
+  width: 860px;
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(31, 35, 40, 0.25);
+}
+.modal-card h3 { margin-bottom: 4px; }
+.modal-card h4 { font-size: 13px; margin: 14px 0 6px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+
 /* ---- 欢迎页 ---- */
 .welcome-steps { padding-left: 20px; }
 .welcome-steps li { margin: 8px 0; font-size: 14px; color: var(--text-2); }
 
 @media (max-width: 900px) {
   .app-header { flex-wrap: wrap; height: auto; padding: 10px 16px; gap: 10px; }
-  .app-grid { grid-template-columns: 1fr; }
-  #panel-left { position: static; }
+  .setup-grid { grid-template-columns: 1fr; }
+  .start-actions { flex-direction: column; }
+  .chat-topic-banner { max-width: 100%; }
 }

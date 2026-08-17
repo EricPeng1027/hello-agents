@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from src import type_config
 from src.config import get_settings
 from src.materials.loader import SUPPORTED_EXTENSIONS
 from src.models import RevisionFeedback
@@ -110,6 +111,27 @@ class ChatStartRequest(BaseModel):
 class ChatMessageRequest(BaseModel):
     message: str
     force: bool = False  # 用户点击"直接生成"，跳过继续澄清
+
+
+class TypeConfigPayload(BaseModel):
+    """类型结构覆盖（保存用，全量替换该类型 YAML；None 字段不写入）"""
+
+    name: Optional[str] = None
+    system_prompt: Optional[str] = None
+    material_role_hint: Optional[str] = None
+    word_count_total: Optional[int] = None
+    sections: Optional[List[Dict]] = None
+
+
+class CustomTypePayload(BaseModel):
+    """新建自定义类型（全量定义；name 与 sections 必填）"""
+
+    type_id: str
+    name: str
+    system_prompt: Optional[str] = None
+    material_role_hint: Optional[str] = None
+    word_count_total: Optional[int] = None
+    sections: List[Dict]
 
 
 # ------------------------------------------------------------------ 材料管理
@@ -370,6 +392,8 @@ def list_types():
                 "type_id": spec.type_id,
                 "name": spec.name,
                 "paradigm": spec.paradigm,
+                "origin": "custom" if orch.registry.is_custom(type_id) else "builtin",
+                "is_overridden": type_config.has_override(type_id),
                 "sections": [
                     {
                         "key": s.key,
@@ -382,6 +406,132 @@ def list_types():
             }
         )
     return result
+
+
+# ------------------------------------------------------------------ 类型配置
+def _serialize_type_config(type_id: str) -> dict:
+    """生效配置（默认+覆盖合并结果）+ 覆盖状态 + 内置默认（供编辑器对照）"""
+    spec = orch.registry.get(type_id)
+    default = orch.registry.get_default(type_id)
+    if spec is None or default is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+
+    def secs(s):
+        return [
+            {
+                "key": x.key,
+                "title": x.title,
+                "required": x.required,
+                "target_words": x.target_words,
+                "hints": x.hints,
+            }
+            for x in s.sections
+        ]
+
+    return {
+        "type_id": type_id,
+        "name": spec.name,
+        "origin": "custom" if orch.registry.is_custom(type_id) else "builtin",
+        "is_overridden": type_config.has_override(type_id),
+        "effective": {
+            "name": spec.name,
+            "system_prompt": spec.system_prompt,
+            "material_role_hint": spec.material_role_hint,
+            "word_count_total": spec.word_count_total,
+            "sections": secs(spec),
+        },
+        "defaults": {
+            "name": default.name,
+            "system_prompt": default.system_prompt,
+            "material_role_hint": default.material_role_hint,
+            "word_count_total": default.word_count_total,
+            "sections": secs(default),
+        },
+    }
+
+
+@app.get("/api/types/{type_id}/config")
+def get_type_config(type_id: str):
+    """类型结构配置：生效值 + 是否覆盖 + 内置默认"""
+    return _serialize_type_config(type_id)
+
+
+@app.put("/api/types/{type_id}/config")
+def put_type_config(type_id: str, payload: TypeConfigPayload):
+    """保存类型结构覆盖：写 YAML + 注册表热更新（与撰写互斥）"""
+    if orch.registry.get(type_id) is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+    if not WRITE_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "有撰写/修订任务进行中，请稍后再试")
+    try:
+        try:
+            type_config.save_type_override(
+                type_id, payload.model_dump(exclude_unset=True)
+            )
+        except type_config.TypeConfigError as e:
+            raise HTTPException(422, str(e))
+        orch.registry.refresh_type(type_id)
+    finally:
+        WRITE_LOCK.release()
+    return _serialize_type_config(type_id)
+
+
+@app.delete("/api/types/{type_id}/config")
+def delete_type_config(type_id: str):
+    """恢复默认：删除覆盖 YAML + 注册表热更新"""
+    if orch.registry.get(type_id) is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+    if not WRITE_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "有撰写/修订任务进行中，请稍后再试")
+    try:
+        type_config.delete_type_override(type_id)
+        orch.registry.refresh_type(type_id)
+    finally:
+        WRITE_LOCK.release()
+    return _serialize_type_config(type_id)
+
+
+# ------------------------------------------------------------------ 类型的增删
+@app.post("/api/types", status_code=201)
+def create_type(payload: CustomTypePayload):
+    """新建自定义类型：全量 YAML 定义 + 注册表热更新（与撰写互斥）"""
+    try:
+        type_config.validate_type_id(payload.type_id)
+    except type_config.TypeConfigError as e:
+        raise HTTPException(422, str(e))
+    if orch.registry.get(payload.type_id) is not None:
+        raise HTTPException(409, f"类型已存在: {payload.type_id}")
+    if payload.type_id in orch.registry.list_deleted_builtin():
+        raise HTTPException(409, f"'{payload.type_id}' 是已删除的内置类型，请先在材料管理中恢复或换用其他标识")
+    if not WRITE_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "有撰写/修订任务进行中，请稍后再试")
+    try:
+        data = payload.model_dump(exclude={"type_id"})
+        try:
+            type_config.save_custom_type(payload.type_id, data)
+        except type_config.TypeConfigError as e:
+            raise HTTPException(422, str(e))
+        orch.registry.register_custom(
+            payload.type_id, type_config.load_custom_type(payload.type_id)
+        )
+    finally:
+        WRITE_LOCK.release()
+    return _serialize_type_config(payload.type_id)
+
+
+@app.delete("/api/types/{type_id}")
+def delete_type(type_id: str):
+    """删除类型：自定义删定义；内置加隐藏标记（磁盘材料目录保留）"""
+    if orch.registry.get(type_id) is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+    if not WRITE_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "有撰写/修订任务进行中，请稍后再试")
+    try:
+        kind = orch.registry.delete_type(type_id)
+    finally:
+        WRITE_LOCK.release()
+    return {"ok": True, "deleted": type_id, "kind": kind,
+            "note": "磁盘材料目录保留" if kind == "builtin" else "定义已删除，材料目录保留"}
 
 
 @app.post("/api/materials/upload")
