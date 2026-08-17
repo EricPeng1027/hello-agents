@@ -81,12 +81,17 @@ class MaterialManager:
         return "local" if isinstance(backend, LocalMaterialBackend) else "rag"
 
     def _get_backend(self, scope: Optional[str] = None):
-        """按角色取后端实例（惰性创建并缓存）"""
+        """按角色取后端实例（惰性创建并缓存）
+
+        scope 可含类型命名空间，如 "work_summary:facts"（按类型+角色隔离），
+        派生后端命名空间为 f"{namespace}_{scope}"（":" 替换为 "_"）。
+        """
         if not scope:
             return self.backend
         if scope not in self._scoped_backends:
+            ns_suffix = scope.replace(":", "_")
             self._scoped_backends[scope] = self._build_backend(
-                f"{self.namespace}_{scope}"
+                f"{self.namespace}_{ns_suffix}"
             )
         return self._scoped_backends[scope]
 

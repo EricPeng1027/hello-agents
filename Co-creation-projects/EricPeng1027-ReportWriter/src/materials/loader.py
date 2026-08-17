@@ -4,8 +4,11 @@ import os
 from pathlib import Path
 from typing import List
 
-# RAGTool 经 MarkItDown 支持的格式
-SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx", ".html", ".htm", ".json"}
+# RAGTool 经 MarkItDown 支持的格式 + 数据表（供 read_data_table 工具读取）
+SUPPORTED_EXTENSIONS = {
+    ".md", ".txt", ".pdf", ".docx", ".html", ".htm", ".json",
+    ".csv", ".xlsx",
+}
 
 
 def scan_materials(data_dir: str) -> List[Path]:

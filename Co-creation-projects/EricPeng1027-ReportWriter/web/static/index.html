@@ -28,20 +28,46 @@
         </label>
 
         <div class="upload-block">
-          <span class="field-label">参考材料（可选，撰写前上传）</span>
+          <span class="field-label">参考材料（可选，撰写前上传到当前所选类型）</span>
           <div id="uploadRow">
             <select id="uploadScope">
               <option value="facts">事实材料（内容依据）</option>
               <option value="style">风格材料（只参考写法）</option>
             </select>
             <input id="fileInput" type="file" multiple
-                   accept=".md,.txt,.pdf,.docx,.html,.htm,.json">
+                   accept=".md,.txt,.pdf,.docx,.html,.htm,.json,.csv,.xlsx">
             <button id="btnUpload" type="button">上传</button>
           </div>
           <ul id="uploadList"></ul>
         </div>
 
         <button id="btnStart" class="primary" type="button">开始撰写</button>
+        <button id="btnChatStart" type="button" class="secondary-btn">💬 对话式撰写</button>
+        <button id="btnMaterials" type="button" class="secondary-btn">🗂 材料管理</button>
+      </section>
+
+      <section class="card hidden" id="card-materials">
+        <h2>材料管理</h2>
+        <p class="hint">按类型管理参考材料（事实库/风格库）；删除后可点「同步到检索库」重建索引。</p>
+        <label class="field">
+          <span>材料类型</span>
+          <select id="materialTypeFilter"></select>
+        </label>
+        <div id="materialsList"></div>
+        <button id="btnReingest" type="button" class="secondary-btn">🔄 同步到检索库</button>
+        <div id="materialsMsg" class="hint"></div>
+      </section>
+
+      <section class="card hidden" id="card-chat">        <h2>对话式撰写</h2>
+        <p class="hint">用几轮对话明确需求，我会提炼主题并追问关键信息；确认后进入大纲规划。</p>
+        <div id="chatMessages"></div>
+        <div id="chatInputRow">
+          <textarea id="chatInput" rows="2" placeholder="如：帮我写一份 2026 年 Q2 研发部的工作总结，重点写交付和质量"></textarea>
+          <div class="chat-actions">
+            <button id="btnChatSend" class="primary" type="button">发送</button>
+            <button id="btnChatGenerate" type="button" disabled>信息够了，直接生成</button>
+          </div>
+        </div>
       </section>
 
       <section class="card" id="card-progress">
@@ -92,10 +118,10 @@
       <section class="card" id="card-welcome">
         <h2>使用说明</h2>
         <ol class="welcome-steps">
-          <li>左侧选择材料类型、填写主题（可先把参考材料上传到事实/风格库）</li>
-          <li>点击「开始撰写」：Agent 先规划章节大纲，完成后在右侧确认或编辑</li>
-          <li>确认大纲后 Agent 逐章撰写并自评，成稿展示在右侧，可下载 MD/DOCX</li>
-          <li>阅读后填写修改意见（全局或按章节），提交后 Agent 增量修订并重新导出</li>
+          <li>左侧选择材料类型（各类型材料独立存放：data/&lt;类型&gt;/facts|style），可先把参考材料上传到当前类型的库（支持 CSV/XLSX 数据表）</li>
+          <li>点击「开始撰写」直接生成；或点「💬 对话式撰写」用几轮对话明确需求后再生成；点「🗂 材料管理」查看/删除/同步各类型材料</li>
+          <li>Agent 先规划章节大纲，完成后在右侧确认或编辑，随后逐章撰写并自评打分</li>
+          <li>成稿展示在右侧（含各章评分），可下载 MD/DOCX；填写修改意见可增量修订</li>
         </ol>
       </section>
     </main>

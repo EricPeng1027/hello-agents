@@ -93,6 +93,7 @@ class DraftingAgent:
         """原生 ReAct 循环（参考第四章示例）"""
         history: List[str] = []
         tools_desc = self.tool_executor.describe() or "（无可用工具）"
+        prev_signature: Optional[str] = None
 
         for step in range(1, self.max_steps + 1):
             prompt = react_prompt.format(
@@ -110,18 +111,38 @@ class DraftingAgent:
             thought, action = self._parse_output(text)
             if thought:
                 print(f"   🤔 {thought[:80]}")
+
+            # 模型把 JSON/正文直接铺在输出里、没给 Action：尝试就地挽救为 Finish
             if not action:
-                break
+                salvaged = self._salvage_action(text)
+                if salvaged is not None:
+                    print("   ▸️  未输出标准 Action，已从输出中挽救 Finish 内容")
+                    return salvaged
+                history.append(
+                    "Observation: 未检测到 Action。请严格只输出一行 "
+                    "Action: Finish[{\"key\":..., \"title\":..., \"content\":..., \"word_count\":...}]"
+                )
+                continue
 
             if action.startswith("Finish"):
                 final = self._parse_action_input(action)
-                print(f"   🎉 完成撰写")
+                print("   🎉 完成撰写")
                 return final
 
             tool_name, tool_input = self._parse_action(action)
             if not tool_name:
                 history.append("Observation: 无效的 Action 格式")
                 continue
+
+            # 同一工具同一参数连续调用 → 陷入循环，提示直接 Finish
+            signature = f"{tool_name}:{tool_input.strip()}"
+            if signature == prev_signature:
+                history.append(
+                    f"Observation: 你已连续两次调用 {tool_name} 且参数相同。"
+                    "请基于已有信息直接撰写并输出 Action: Finish[JSON]。"
+                )
+                continue
+            prev_signature = signature
 
             func = self.tool_executor.get(tool_name)
             observation = (
@@ -132,6 +153,26 @@ class DraftingAgent:
             history.append(f"Observation: {observation}")
 
         return ""
+
+    @staticmethod
+    def _salvage_action(text: str) -> Optional[str]:
+        """模型没给 Action 时，从输出中挽救 Finish 内容
+
+        覆盖两种常见跑偏：
+        1. 只输出了 JSON 正文（没包 Finish[...]）
+        2. 把 Finish[...] 写进了输出但没放在 Action: 行
+        """
+        m = re.search(r"Finish\[(.*)\]", text, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        candidate = text.strip()
+        if candidate.startswith("{"):
+            try:
+                JSONExtractor.extract(candidate, required_fields=["content"])
+                return candidate
+            except Exception:
+                return None
+        return None
 
     @staticmethod
     def _parse_output(text: str) -> Tuple[Optional[str], Optional[str]]:

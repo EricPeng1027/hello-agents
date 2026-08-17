@@ -26,6 +26,11 @@ from .tools.recall_material import (
     TOOL_NAME,
     build_recall_material_tool,
 )
+from .tools.read_data_table import (
+    TOOL_DESCRIPTION as TABLE_TOOL_DESCRIPTION,
+    TOOL_NAME as TABLE_TOOL_NAME,
+    build_read_data_table_tool,
+)
 
 # 进度回调类型：cb({"stage": str, "message": str, ...})
 ProgressCallback = Callable[[dict], None]
@@ -53,7 +58,15 @@ class ReportWriterOrchestrator:
                 TOOL_DESCRIPTION,
                 build_recall_material_tool(self.material, top_k=3),
             )
+        # 注册 read_data_table 工具（数据表读取，不依赖材料后端）
+        self.drafter.register_tool(
+            TABLE_TOOL_NAME,
+            TABLE_TOOL_DESCRIPTION,
+            build_read_data_table_tool(self.settings.data_dir),
+        )
         self.reviewer = ReviewAgent(max_iterations=1)
+        # 撰写期暂存的类型命名空间（_ingest_materials 设置，供 scope 拼接）
+        self._material_ns = ""
 
         self.stats = {
             "start_time": None,
@@ -124,6 +137,16 @@ class ReportWriterOrchestrator:
             outline = self.planner.plan(spec, topic)
             if not outline.get("title"):
                 outline["title"] = f"{spec.name}：{topic}"
+
+            # recall_material 工具切到该类型的专属库（按类型+角色隔离）
+            if self.material.ready and self._use_split_materials:
+                self.drafter.register_tool(
+                    TOOL_NAME,
+                    TOOL_DESCRIPTION,
+                    build_recall_material_tool(
+                        self.material, top_k=3, default_scope=self._material_ns or None
+                    ),
+                )
 
             # 暂存供 draft_with_outline 使用
             self._pending = {"spec": spec, "topic": topic}
@@ -207,6 +230,7 @@ class ReportWriterOrchestrator:
                     "material_ready": self.material.ready,
                 },
             )
+            self._attach_review_summary(draft)
 
             # ⑥ 导出
             if export:
@@ -224,44 +248,81 @@ class ReportWriterOrchestrator:
             self._progress_cb = None
             self._pending = None
 
+    @staticmethod
+    def _attach_review_summary(draft: DocumentDraft) -> None:
+        """汇总各章评审打分到 draft.meta["review_summary"]（无打分则不写）"""
+        scored = []
+        for sec in draft.sections:
+            rr = (sec.metadata or {}).get("review_result")
+            if isinstance(rr, dict) and rr.get("score"):
+                scored.append((sec.title, rr))
+        if not scored:
+            return
+        avg = round(sum(r["score"] for _, r in scored) / len(scored), 1)
+        draft.meta["review_summary"] = {
+            "avg_score": avg,
+            "graded_sections": len(scored),
+            "sections": [
+                {"title": t, "score": r["score"], "grade": r.get("grade", "")}
+                for t, r in scored
+            ],
+        }
+
     def _ingest_materials(
         self, spec: DocumentTypeSpec, materials_dir: Optional[str] = None
     ) -> None:
         """导入参考材料（write 与 revise 共用）
 
-        分库模式（data/facts/ 或 data/style/ 任一存在）按 scope 分别导入，
-        否则走单库模式。结果写入 self.stats["material_hits"] 与
+        分库模式（facts/style 子目录任一存在）按 scope 分别导入，
+        否则走单库模式。scope 带类型命名空间（f"{type_id}:facts"），
+        实现按类型隔离。结果写入 self.stats["material_hits"] 与
         self._use_split_materials。
         """
-        materials_dir = materials_dir or self.settings.data_dir
-        split_dirs = spec.uses_split_material_dirs()
-        facts_dir = Path(materials_dir) / spec.material_facts_dir
-        style_dir = Path(materials_dir) / spec.material_style_dir
-        use_split = split_dirs and (facts_dir.is_dir() or style_dir.is_dir())
+        base = Path(materials_dir or self.settings.data_dir)
+        # 按类型隔离：Spec 配了 material_base_dir 时进入该类型专属子目录
+        if spec.material_base_dir:
+            base = base / spec.material_base_dir
+        facts_dir = base / spec.material_facts_dir
+        style_dir = base / spec.material_style_dir
+        use_split = spec.uses_split_material_dirs() and (
+            facts_dir.is_dir() or style_dir.is_dir()
+        )
+        # scope 命名空间：按类型+角色（如 "work_summary:facts"）
+        ns = spec.type_id if spec.material_base_dir else ""
 
         if spec.material_mode != "none" and self.material.ready:
             if use_split:
                 print(
                     f"▸ 导入参考材料（{self.material.effective_mode} 模式，"
-                    "facts/style 分库）"
+                    f"{spec.name} 专属库，facts/style 分库）"
                 )
                 total = 0
                 if facts_dir.is_dir():
-                    r = self.material.ingest(str(facts_dir), scope=SCOPE_FACTS)
+                    r = self.material.ingest(
+                        str(facts_dir), scope=self._scope(ns, SCOPE_FACTS)
+                    )
                     total += r.get("success", 0)
                 if style_dir.is_dir():
-                    r = self.material.ingest(str(style_dir), scope=SCOPE_STYLE)
+                    r = self.material.ingest(
+                        str(style_dir), scope=self._scope(ns, SCOPE_STYLE)
+                    )
                     total += r.get("success", 0)
                 self.stats["material_hits"] = total
             else:
                 print(f"▸ 导入参考材料（{self.material.effective_mode} 模式）")
-                ingest_result = self.material.ingest(materials_dir)
+                ingest_result = self.material.ingest(str(base))
                 self.stats["material_hits"] = ingest_result.get("success", 0)
         elif spec.material_mode != "none" and not self.material.ready:
             print(f"▸️  参考材料后端未就绪（{self.material.error}），跳过导入")
             self.stats["material_hits"] = 0
 
         self._use_split_materials = use_split
+        self._material_ns = ns  # 供检索时拼 scope 用
+
+    @staticmethod
+    def _scope(ns: str, role: str) -> str:
+        """拼接检索 scope：有类型命名空间时 'type:role'，否则仅角色"""
+        return f"{ns}:{role}" if ns else role
 
     def revise(
         self,
@@ -389,8 +450,11 @@ class ReportWriterOrchestrator:
             return empty
         query = f"{section.title} {feedback}"
         if getattr(self, "_use_split_materials", False):
+            ns = getattr(self, "_material_ns", "")
             return self.material.get_relevant(
-                query, top_k=spec.material_top_k, scope=SCOPE_FACTS
+                query,
+                top_k=spec.material_top_k,
+                scope=self._scope(ns, SCOPE_FACTS),
             )
         return self.material.get_relevant(query, top_k=spec.material_top_k)
 
@@ -412,12 +476,17 @@ class ReportWriterOrchestrator:
 
         query = f"{sec_spec.title} {sec_spec.hints}"
         if getattr(self, "_use_split_materials", False):
+            ns = getattr(self, "_material_ns", "")
             return {
                 "facts": self.material.get_relevant(
-                    query, top_k=spec.material_top_k, scope=SCOPE_FACTS
+                    query,
+                    top_k=spec.material_top_k,
+                    scope=self._scope(ns, SCOPE_FACTS),
                 ),
                 "style": self.material.get_relevant(
-                    query, top_k=spec.material_top_k, scope=SCOPE_STYLE
+                    query,
+                    top_k=spec.material_top_k,
+                    scope=self._scope(ns, SCOPE_STYLE),
                 ),
                 "split": True,
             }

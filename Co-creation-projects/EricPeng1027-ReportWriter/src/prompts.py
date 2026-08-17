@@ -74,6 +74,13 @@ Action: 选择下一步行动，格式为：
 - `{{tool_name}}[{{tool_input}}]`：调用工具检索参考材料。
 - `Finish[JSON内容]`：当你完成章节撰写时，输出最终结果。
 
+## 关键规则（必须遵守）
+- 每次响应**有且只有一个** Thought 和**一个** Action，不得输出多个 Action。
+- Action 必须**独占一行**，行首不得有其他内容。
+- 仅在完全写好章节正文后才能使用 `Finish`；Finish 的内容必须是任务要求的 JSON，不得输出 JSON 以外的文字。
+- 任务中「事实依据」已包含所需数据时，**不要**再调用工具，直接撰写并 Finish（最多调用 2 次工具）。
+- 严禁在 Finish 的 JSON content 字段里写入 Thought/Action/Observation 字样。
+
 ## 当前写作任务
 {question}
 
@@ -112,7 +119,7 @@ DRAFTER_TASK_TEMPLATE = """请撰写材料中的某一章节。
 重要：
 - content 字段必须包含完整的章节正文。
 - 事实依据是内容的事实来源，必须基于它撰写；风格参考仅用于学习写法，不得把其中的事实/数据写入正文。
-- 如需补充事实或确认口径，可调用 recall_material 工具检索（facts 查事实，style 查写法）。
+- 如需补充事实或确认口径，可调用 recall_material 工具检索（facts 查事实，style 查写法）；若上传了数据表（CSV/XLSX），用 read_data_table 读取真实数据。
 """
 
 # 单库模式（未分 facts/style 目录时）使用的任务模板，保持与旧版兼容
@@ -143,7 +150,34 @@ DRAFTER_TASK_TEMPLATE_SINGLE = """请撰写材料中的某一章节。
 重要：
 - content 字段必须包含完整的章节正文。
 - 参考材料仅用于借鉴行文风格、结构与数据口径，必须基于当前实际主题重新撰写。
-- 如需补充事实或确认口径，可调用 recall_material 工具检索参考材料。
+- 如需补充事实或确认口径，可调用 recall_material 工具检索参考材料；若上传了数据表（CSV/XLSX），用 read_data_table 读取真实数据。
+"""
+
+# =============================================================================
+# 对话式撰写（Web 聊天形态）：需求澄清
+# =============================================================================
+
+CHAT_CLARIFY_PROMPT = """你是材料撰写助手，正与用户以多轮对话明确撰写需求。
+
+材料类型: {type_name}
+章节骨架: {sections_brief}
+对话历史:
+{history}
+
+请输出一个 JSON 对象（不要输出任何其他文字）:
+```json
+{{
+  "ready": true 或 false,
+  "topic": "根据对话提炼出的材料主题（ready=false 时给当前最佳猜测）",
+  "question": "还需要向用户追问的一个问题（ready=true 时为空字符串）"
+}}
+```
+
+规则:
+- 用户已给出可用于撰写的主题与关键信息（如时间范围、部门、重点）时，ready=true。
+- 信息不足时，ready=false 并给出**一个**最关键的追问（不要一次问多个）。
+- 用户明确说"直接生成"/"就这样吧"等，立即 ready=true。
+- question 要简短口语化，不超过 40 字。
 """
 
 # =============================================================================
@@ -184,7 +218,44 @@ REVIEWER_PROMPTS = {
 
 请输出优化后的完整章节正文（Markdown格式），不要输出解释。
 """,
+    # 打分维度落地：结构化评分（JSON），供 ReviewResult 真实填分
+    "score": """你是一位严格的材料评审专家。请为以下章节内容打分。
+
+# 章节标题: {section_title}
+# 目标字数: {target_words} 字（±10% 内视为达标）
+# 章节内容:
+{content}
+
+# 评分维度（权重）
+1. content_quality（内容质量, 满分40）: 准确性、完整性、深度、贴合主题
+2. structure_logic（结构逻辑, 满分30）: 层次清晰、逻辑连贯、过渡自然
+3. language（语言表达, 满分20）: 简洁专业、用词准确、语气得体
+4. format_spec（格式规范, 满分10）: 字数达标、格式正确、排版美观
+
+# 输出要求
+只输出一个 JSON 对象，不要输出任何其他文字：
+```json
+{{
+  "dimension_scores": {{
+    "content_quality": 0,
+    "structure_logic": 0,
+    "language": 0,
+    "format_spec": 0
+  }},
+  "feedback": {{
+    "content_quality": "一句话评语",
+    "structure_logic": "一句话评语",
+    "language": "一句话评语",
+    "format_spec": "一句话评语"
+  }},
+  "summary": "总体评语（30字以内）"
+}}
+```
+""",
 }
+
+# 模块级打分模板：旧 spec 的 reviewer prompts 缺 "score" 键时兜底（对齐 revise 的模式）
+REVIEWER_SCORE_PROMPT = REVIEWER_PROMPTS["score"]
 
 
 # 用户反馈修订模板：用户阅读成稿后提出修改意见，Reviewer 按意见增量修订。

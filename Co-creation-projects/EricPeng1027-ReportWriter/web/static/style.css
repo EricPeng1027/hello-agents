@@ -193,6 +193,88 @@ button.primary:hover:not(:disabled) { background: #1a5fd7; }
 
 .sec-feedback { margin-top: 8px; font-size: 13px; background: #fffdf5; }
 
+/* ---- 评审打分 ---- */
+.score-badge {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+.score-badge[data-grade="优秀"] { background: #dafbe1; color: #1a7f37; }
+.score-badge[data-grade="良好"] { background: #ddf4ff; color: #0969da; }
+.score-badge[data-grade="合格"] { background: #fff3cd; color: #9a6700; }
+.score-badge[data-grade="待改进"],
+.score-badge[data-grade="不合格"] { background: #ffebe9; color: #cf222e; }
+.score-detail { font-size: 12px; color: #57606a; margin-top: 4px; }
+.score-detail summary { cursor: pointer; }
+.review-avg { font-weight: 600; color: #1a7f37; }
+
+/* ---- 对话式撰写 ---- */
+.secondary-btn {
+  width: 100%;
+  margin-top: 8px;
+  background: #f6f8fa;
+}
+#chatMessages {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 4px 2px;
+}
+.chat-bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-bubble.user {
+  align-self: flex-end;
+  background: #1f6feb;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.chat-bubble.assistant {
+  align-self: flex-start;
+  background: #f0f3f6;
+  color: #24292f;
+  border-bottom-left-radius: 4px;
+}
+.chat-bubble.system {
+  align-self: center;
+  background: transparent;
+  color: #8c959f;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+#chatInputRow textarea { margin-bottom: 8px; }
+.chat-actions { display: flex; gap: 8px; }
+.chat-actions .primary { flex: 1; margin-top: 0; }
+.chat-actions button:not(.primary) { flex-shrink: 0; }
+
+/* ---- 材料管理 ---- */
+.mat-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+.mat-table th, .mat-table td {
+  border-bottom: 1px solid #eaeef2;
+  padding: 6px 8px;
+  text-align: left;
+}
+.mat-table th { color: #57606a; font-weight: 600; font-size: 12px; }
+.mat-del {
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #cf222e;
+  border-color: #cf222e44;
+  background: #fff;
+}
+.mat-del:hover { background: #ffebe9; }
+
 .feedback-block {
   border-top: 1px solid #eaeef2;
   padding-top: 14px;

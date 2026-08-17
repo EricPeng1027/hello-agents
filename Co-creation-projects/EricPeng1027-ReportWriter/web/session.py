@@ -21,6 +21,10 @@ STATUS_DONE = "done"                # 成稿就绪
 STATUS_REVISING = "revising"        # 按用户意见修订中
 STATUS_ERROR = "error"
 
+# 对话式撰写的澄清状态（复用统一会话生命周期）
+STATUS_CLARIFYING = "clarifying"    # 对话收集中（等待用户补充信息）
+STATUS_CHOOSING = "choosing"        # 等待用户选择"直接生成/继续澄清"
+
 
 @dataclass
 class SessionState:
@@ -33,6 +37,8 @@ class SessionState:
     outline: Optional[dict] = None
     draft: Optional[object] = None  # DocumentDraft
     error: Optional[str] = None
+    # 对话式撰写：多轮澄清消息 [{"role": "user"|"assistant", "content": str}]
+    chat_messages: List[dict] = field(default_factory=list)
     events: List[dict] = field(default_factory=list)   # backlog（重连回放）
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # 实时订阅
     created_at: float = field(default_factory=time.time)

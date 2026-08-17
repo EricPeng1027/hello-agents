@@ -61,6 +61,7 @@ SECTIONS = [
 
 ReportSpec = DocumentTypeSpec(
     type_id="report",
+    material_base_dir="report",  # 材料按类型隔离: data/report/facts|style
     name="汇报",
     paradigm="plan_solve",
     system_prompt=SYSTEM_PROMPT,

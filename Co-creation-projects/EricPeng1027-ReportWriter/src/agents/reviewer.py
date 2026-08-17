@@ -4,14 +4,22 @@
 原生 Reflection 写法：初始 → 反思 → 精修，底层统一用 HelloAgentsLLM.invoke()。
 """
 
-from typing import Dict
+from typing import Dict, Optional
 
 from hello_agents import HelloAgentsLLM
 
-from ..models import DocumentTypeSpec, SectionDraft
-from ..prompts import REVIEWER_REVISE_PROMPT
-from ..utils import count_words
+from ..models import DocumentTypeSpec, ReviewResult, SectionDraft
+from ..prompts import REVIEWER_REVISE_PROMPT, REVIEWER_SCORE_PROMPT
+from ..utils import JSONExtractor, count_words
 from .llm_service import LLMService
+
+# 维度满分（与 REVIEWER_SCORE_PROMPT 权重一致）
+DIMENSION_CAPS = {
+    "content_quality": 40,
+    "structure_logic": 30,
+    "language": 20,
+    "format_spec": 10,
+}
 
 
 class ReviewAgent:
@@ -61,7 +69,75 @@ class ReviewAgent:
             section.metadata["reviewed"] = False
             section.metadata["review_error"] = str(e)
 
+        # 评审完成后做结构化打分（单次 LLM 调用，失败不影响主流程）
+        score_prompts = (prompts or {}).get("score") or REVIEWER_SCORE_PROMPT
+        target_map = {s.key: s.target_words for s in spec.sections}
+        review_result = self.score(
+            section, spec, score_prompts, target_map.get(section.key, 0)
+        )
+        section.metadata["review_result"] = review_result.to_dict()
+        if review_result.score > 0:
+            print(
+                f"   📊 评审得分: {review_result.score}/100（{review_result.grade}）"
+            )
+
         return section
+
+    def score(
+        self,
+        section: SectionDraft,
+        spec: DocumentTypeSpec,
+        template: str = REVIEWER_SCORE_PROMPT,
+        target_words: int = 0,
+    ) -> ReviewResult:
+        """对章节做结构化评分（单次 LLM 调用，任何失败返回 0 分兜底）"""
+        if not section.content or not section.content.strip():
+            return ReviewResult(score=0, grade="未评审", reviewer_notes="章节为空")
+
+        try:
+            prompt = template.format(
+                section_title=section.title,
+                target_words=target_words or "原章篇幅",
+                content=section.content,
+            )
+            raw = self._invoke(prompt, spec.system_prompt)
+            data = JSONExtractor.extract(raw, required_fields=["dimension_scores"])
+            return self._build_result(data)
+        except Exception as e:
+            print(f"   ▸️  打分失败（不影响主流程）: {e}")
+            return ReviewResult(
+                score=0, grade="打分失败", reviewer_notes=str(e)[:200]
+            )
+
+    @staticmethod
+    def _build_result(data: Dict) -> ReviewResult:
+        """把 LLM 返回的评分 JSON 规整为 ReviewResult（维度分截断到满分）"""
+        raw_dims = data.get("dimension_scores") or {}
+        dims: Dict[str, int] = {}
+        for dim, cap in DIMENSION_CAPS.items():
+            try:
+                dims[dim] = max(0, min(int(raw_dims.get(dim, 0)), cap))
+            except (TypeError, ValueError):
+                dims[dim] = 0
+        total = sum(dims.values())
+        grade = (
+            "优秀" if total >= 90
+            else "良好" if total >= 80
+            else "合格" if total >= 70
+            else "待改进" if total >= 60
+            else "不合格"
+        )
+        feedback = data.get("feedback") or {}
+        if not isinstance(feedback, dict):
+            feedback = {"summary": str(feedback)}
+        return ReviewResult(
+            score=total,
+            grade=grade,
+            dimension_scores=dims,
+            detailed_feedback=feedback,
+            needs_revision=total < 70,
+            reviewer_notes=str(data.get("summary", ""))[:300],
+        )
 
     def revise_with_feedback(
         self,

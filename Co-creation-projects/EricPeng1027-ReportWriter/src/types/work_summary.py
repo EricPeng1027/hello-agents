@@ -53,6 +53,7 @@ SECTIONS = [
 
 WorkSummarySpec = DocumentTypeSpec(
     type_id="work_summary",
+    material_base_dir="work_summary",  # 材料按类型隔离: data/work_summary/facts|style
     name="工作总结",
     paradigm="plan_solve",
     system_prompt=SYSTEM_PROMPT,

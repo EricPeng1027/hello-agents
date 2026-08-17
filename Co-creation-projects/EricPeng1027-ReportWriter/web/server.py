@@ -30,9 +30,12 @@ from src.config import get_settings
 from src.materials.loader import SUPPORTED_EXTENSIONS
 from src.models import RevisionFeedback
 from src.orchestrator import ReportWriterOrchestrator
+from src.prompts import CHAT_CLARIFY_PROMPT
 from src.utils import safe_filename
 from web.session import (
     HEARTBEAT_S,
+    STATUS_CHOOSING,
+    STATUS_CLARIFYING,
     STATUS_DONE,
     STATUS_DRAFTING,
     STATUS_ERROR,
@@ -97,6 +100,43 @@ class OutlineConfirm(BaseModel):
 class ReviseRequest(BaseModel):
     global_feedback: str = ""
     section_feedback: Dict[str, str] = {}
+
+
+class ChatStartRequest(BaseModel):
+    type_id: str
+    message: str
+
+
+class ChatMessageRequest(BaseModel):
+    message: str
+    force: bool = False  # 用户点击"直接生成"，跳过继续澄清
+
+
+# ------------------------------------------------------------------ 材料管理
+def _type_material_root(type_id: str) -> Path:
+    """某类型的材料根目录：data/<material_base_dir>（缺省即 data/<type_id>）"""
+    spec = orch.registry.get(type_id)
+    if spec is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+    base = Path(get_settings().data_dir)
+    return base / (spec.material_base_dir or type_id)
+
+
+def _safe_material_path(type_id: str, scope: str, filename: str) -> Path:
+    """把 (类型, 角色, 文件名) 解析为服务端绝对路径（防穿越）
+
+    文件名只允许 basename（拒绝任何目录成分），解析后必须仍落在类型目录内。
+    """
+    root = _type_material_root(type_id).resolve()
+    if scope not in ("facts", "style"):
+        raise HTTPException(422, "scope 必须是 facts 或 style")
+    base = Path(filename).name
+    if not base or base != filename:
+        raise HTTPException(422, "非法文件名（不允许路径成分）")
+    path = (root / scope / base).resolve()
+    if not str(path).startswith(str(root)):
+        raise HTTPException(422, "非法文件路径")
+    return path
 
 
 # ------------------------------------------------------------------ helpers
@@ -228,6 +268,7 @@ def _serialize_draft(session: SessionState) -> dict:
         "type_id": draft.type_id,
         "total_words": draft.total_words(),
         "revision_rounds": len((draft.meta or {}).get("revision_rounds", [])),
+        "review_summary": (draft.meta or {}).get("review_summary"),
         "sections": [
             {
                 "key": s.key,
@@ -235,6 +276,7 @@ def _serialize_draft(session: SessionState) -> dict:
                 "content": s.content,
                 "word_count": s.word_count,
                 "user_revised": bool(s.metadata.get("user_revised")),
+                "review": (s.metadata or {}).get("review_result"),
             }
             for s in draft.sections
         ],
@@ -243,6 +285,77 @@ def _serialize_draft(session: SessionState) -> dict:
             "docx": bool(export.get("docx")),
         },
     }
+
+
+# 对话式撰写：澄清轮数软上限（超过则提示用户可直接生成）
+MAX_CLARIFY_ROUNDS = 5
+
+
+def _run_clarify_turn(session: SessionState) -> None:
+    """对话澄清（同步，单次 LLM 调用）：提炼主题 + 生成下一追问
+
+    结果写回 session（chat_messages / status），任何失败都兜底成 ready=True
+    （避免澄清环节把用户卡死）。
+    """
+    spec = orch.registry.get(session.type_id)
+    history_text = "\n".join(
+        f"{'用户' if m['role'] == 'user' else '助手'}: {m['content']}"
+        for m in session.chat_messages
+    )
+    sections_brief = "、".join(s.title for s in spec.sections)
+    prompt = CHAT_CLARIFY_PROMPT.format(
+        type_name=spec.name,
+        sections_brief=sections_brief,
+        history=history_text,
+    )
+    try:
+        from src.utils import JSONExtractor
+
+        resp = orch.planner.llm.invoke(
+            [
+                {"role": "system", "content": "你是严谨的材料撰写需求分析助手。"},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        raw = resp.content if hasattr(resp, "content") else str(resp)
+        data = JSONExtractor.extract(raw, required_fields=["ready", "topic"])
+        ready = bool(data.get("ready"))
+        topic = str(data.get("topic") or "").strip()
+        question = str(data.get("question") or "").strip()
+        if topic:
+            session.topic = topic
+    except Exception as e:
+        print(f"▸️  澄清解析失败，直接生成: {e}")
+        ready, question = True, ""
+
+    if ready:
+        session.status = STATUS_CHOOSING
+        store.emit(session, "chat_ready", f"需求已明确：{session.topic}", topic=session.topic)
+    else:
+        session.status = STATUS_CLARIFYING
+        if not question:
+            question = "请再补充一些关键信息（时间范围/部门/重点成果）？"
+        session.chat_messages.append({"role": "assistant", "content": question})
+        store.emit(session, "chat_question", question)
+
+
+def _run_clarify_stage(session: SessionState, user_message: str, loop) -> None:
+    """一轮澄清（后台线程）：带会话状态锁"""
+    if not WRITE_LOCK.acquire(blocking=False):
+        store.emit(session, "error", "有撰写/修订任务进行中，请稍后再试")
+        return
+    try:
+        session.chat_messages.append({"role": "user", "content": user_message})
+        _run_clarify_turn(session)
+    finally:
+        WRITE_LOCK.release()
+
+
+def _kickoff_prepare(session: SessionState, loop) -> None:
+    """从对话进入撰写：确认主题 → 阶段A（导入+规划）"""
+    session.status = STATUS_WRITING
+    store.emit(session, "start", f"开始撰写：{session.topic}")
+    asyncio.create_task(asyncio.to_thread(_run_prepare_stage, session, loop))
 
 
 # ------------------------------------------------------------------ routes
@@ -275,12 +388,13 @@ def list_types():
 async def upload_materials(
     files: List[UploadFile] = File(...),
     scope: str = Form(...),
+    type_id: str = Form(...),
 ):
-    """上传参考材料到 data/facts 或 data/style（撰写时被导入检索）"""
+    """上传参考材料到指定类型的 facts/style 库（撰写时按类型导入检索）"""
     if scope not in ("facts", "style"):
         raise HTTPException(422, "scope 必须是 facts 或 style")
 
-    target_dir = Path(get_settings().data_dir) / scope
+    target_dir = _type_material_root(type_id) / scope
     target_dir.mkdir(parents=True, exist_ok=True)
 
     saved, rejected = [], []
@@ -303,9 +417,76 @@ async def upload_materials(
             continue
         safe_name = safe_filename(Path(name).stem) + ext
         (target_dir / safe_name).write_bytes(content)
-        saved.append(f"{scope}/{safe_name}")
+        saved.append(f"{type_id}/{scope}/{safe_name}")
 
     return {"saved": saved, "rejected": rejected}
+
+
+@app.get("/api/materials")
+def list_materials(type_id: Optional[str] = None):
+    """材料清单（管理页数据源）
+
+    不传 type_id 时返回所有类型；返回每项材料的类型/角色/大小/修改时间。
+    """
+    type_ids = [type_id] if type_id else orch.registry.list_types()
+    if type_id and orch.registry.get(type_id) is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+    items = []
+    for tid in type_ids:
+        spec = orch.registry.get(tid)
+        root = _type_material_root(tid)
+        for scope in ("facts", "style"):
+            d = root / scope
+            if not d.is_dir():
+                continue
+            for f in sorted(d.iterdir()):
+                if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    items.append(
+                        {
+                            "type_id": tid,
+                            "type_name": spec.name,
+                            "scope": scope,
+                            "filename": f.name,
+                            "size": f.stat().st_size,
+                            "modified": round(f.stat().st_mtime, 1),
+                        }
+                    )
+    return {"items": items, "backend": orch.material.effective_mode}
+
+
+@app.delete("/api/materials/{type_id}/{scope}/{filename}")
+def delete_material(type_id: str, scope: str, filename: str):
+    """删除指定材料文件（RAG 库中对应向量建议通过 reingest 清理）"""
+    path = _safe_material_path(type_id, scope, filename)
+    if not path.is_file():
+        raise HTTPException(404, f"材料不存在: {filename}")
+    path.unlink()
+    return {"ok": True, "deleted": f"{type_id}/{scope}/{filename}"}
+
+
+@app.post("/api/materials/reingest")
+def reingest_materials(type_id: Optional[str] = None):
+    """按类型把磁盘材料导入检索库（管理页"同步到检索库"按钮）
+
+    RAG 模式 point ID 按 (namespace,文件名,块号) uuid5 幂等；
+    本地后端按路径幂等，故重复调用不会重复导入。
+    """
+    type_ids = [type_id] if type_id else orch.registry.list_types()
+    if type_id and orch.registry.get(type_id) is None:
+        raise HTTPException(422, f"未知材料类型: {type_id}")
+    results = {}
+    for tid in type_ids:
+        spec = orch.registry.get(tid)
+        root = _type_material_root(tid)
+        ns = spec.material_base_dir or ""
+        per_type = {}
+        for scope in ("facts", "style"):
+            d = root / scope
+            if d.is_dir():
+                r = orch.material.ingest(str(d), scope=orch._scope(ns, scope))
+                per_type[scope] = r.get("success", 0)
+        results[tid] = per_type
+    return {"ok": True, "ingested": results, "backend": orch.material.effective_mode}
 
 
 @app.post("/api/write")
@@ -323,6 +504,65 @@ async def start_write(req: WriteRequest):
     store.emit(session, "start", f"开始撰写：{topic}")
     asyncio.create_task(asyncio.to_thread(_run_prepare_stage, session, loop))
     return {"session_id": session.session_id}
+
+
+# ------------------------------------------------------------------ 对话式撰写
+@app.post("/api/chat/start")
+async def chat_start(req: ChatStartRequest):
+    """对话式撰写入口：建会话 → 后台跑第一轮澄清"""
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(422, "请先描述你的撰写需求")
+    if orch.registry.get(req.type_id) is None:
+        raise HTTPException(422, f"未知材料类型: {req.type_id}")
+
+    session = store.create(req.type_id, topic=message[:80])
+    session.status = STATUS_CLARIFYING
+    loop = asyncio.get_running_loop()
+    store.emit(session, "chat_start", "已收到需求，正在理解…")
+    asyncio.create_task(asyncio.to_thread(_run_clarify_stage, session, message, loop))
+    return {"session_id": session.session_id}
+
+
+@app.post("/api/chat/{session_id}/message")
+async def chat_message(session_id: str, req: ChatMessageRequest):
+    """对话消息：继续澄清；force=true 或超轮次时直接进入撰写"""
+    session = _get_session(session_id)
+    if session.status not in (STATUS_CLARIFYING, STATUS_CHOOSING):
+        raise HTTPException(409, "当前状态不可继续对话: " + session.status)
+
+    message = req.message.strip()
+    if not message and not req.force:
+        raise HTTPException(422, "消息不能为空")
+
+    loop = asyncio.get_running_loop()
+    user_turns = sum(1 for m in session.chat_messages if m["role"] == "user")
+
+    if req.force or session.status == STATUS_CHOOSING:
+        if message and session.status != STATUS_CHOOSING:
+            session.chat_messages.append({"role": "user", "content": message})
+        _kickoff_prepare(session, loop)
+        return {"ok": True, "decision": "generate"}
+
+    if user_turns >= MAX_CLARIFY_ROUNDS:
+        session.chat_messages.append({"role": "user", "content": message})
+        session.status = STATUS_CHOOSING
+        store.emit(session, "chat_ready", f"信息已足够：{session.topic}", topic=session.topic)
+        return {"ok": True, "decision": "ready"}
+
+    asyncio.create_task(asyncio.to_thread(_run_clarify_stage, session, message, loop))
+    return {"ok": True, "decision": "clarify"}
+
+
+@app.get("/api/chat/{session_id}")
+def chat_state(session_id: str):
+    """对话状态（消息历史 + 当前提炼主题）"""
+    session = _get_session(session_id)
+    return {
+        "status": session.status,
+        "topic": session.topic,
+        "messages": session.chat_messages,
+    }
 
 
 @app.get("/api/outline/{session_id}")

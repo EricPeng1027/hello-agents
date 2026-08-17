@@ -63,6 +63,7 @@ SECTIONS = [
 
 KpiPlanSpec = DocumentTypeSpec(
     type_id="kpi_plan",
+    material_base_dir="kpi_plan",  # 材料按类型隔离: data/kpi_plan/facts|style
     name="KPI 计划",
     paradigm="plan_solve",
     system_prompt=SYSTEM_PROMPT,

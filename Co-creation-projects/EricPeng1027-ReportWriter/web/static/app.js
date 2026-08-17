@@ -13,6 +13,8 @@ const S = {
   DRAFTING: "drafting",
   DONE: "done",
   REVISING: "revising",
+  CLARIFYING: "clarifying",
+  CHOOSING: "choosing",
   ERROR: "error",
 };
 
@@ -23,6 +25,8 @@ const STATUS_LABEL = {
   drafting: "撰写中",
   done: "已完成",
   revising: "修订中",
+  clarifying: "对话澄清中",
+  choosing: "待确认生成",
   error: "出错",
 };
 
@@ -60,6 +64,18 @@ const els = {
   globalFeedback: $("globalFeedback"),
   btnRevise: $("btnRevise"),
   cardWelcome: $("card-welcome"),
+  cardChat: $("card-chat"),
+  chatMessages: $("chatMessages"),
+  chatInput: $("chatInput"),
+  btnChatStart: $("btnChatStart"),
+  btnChatSend: $("btnChatSend"),
+  btnChatGenerate: $("btnChatGenerate"),
+  cardMaterials: $("card-materials"),
+  materialTypeFilter: $("materialTypeFilter"),
+  materialsList: $("materialsList"),
+  materialsMsg: $("materialsMsg"),
+  btnMaterials: $("btnMaterials"),
+  btnReingest: $("btnReingest"),
 };
 
 // ------------------------------------------------------------ 状态切换
@@ -69,16 +85,28 @@ function setState(next, errMsg) {
   els.statusBadge.dataset.state = next;
 
   const busy = next === S.WRITING || next === S.DRAFTING || next === S.REVISING;
-  els.btnStart.disabled = busy;
+  const chatting = next === S.CLARIFYING || next === S.CHOOSING;
+  els.btnStart.disabled = busy || chatting;
+  els.btnChatStart.disabled = busy || chatting;
   els.btnConfirmOutline.disabled = next !== S.OUTLINE;
   els.btnRevise.disabled = next !== S.DONE;
+  els.btnChatSend.disabled = !chatting;
+  els.btnChatGenerate.disabled = !chatting;
 
   els.cardOutline.classList.toggle("hidden", next !== S.OUTLINE);
   els.cardDraft.classList.toggle(
     "hidden",
     !(next === S.DONE || next === S.REVISING)
   );
-  els.cardWelcome.classList.toggle("hidden", next !== S.IDLE && next !== S.ERROR);
+  els.cardChat.classList.toggle("hidden", !chatting);
+  els.cardWelcome.classList.toggle(
+    "hidden",
+    !(next === S.IDLE || next === S.ERROR)
+  );
+  // 材料管理面板只在空闲态可开合（撰写中避免分心）
+  if (next !== S.IDLE && next !== S.ERROR) {
+    els.cardMaterials.classList.add("hidden");
+  }
 
   if (next === S.ERROR && errMsg) appendLog({ stage: "error", message: errMsg });
 }
@@ -117,9 +145,11 @@ async function api(path, options = {}) {
 
 async function loadTypes() {
   typesCache = await api("/types");
-  els.typeSelect.innerHTML = typesCache
+  const options = typesCache
     .map((t) => `<option value="${t.type_id}">${t.name}</option>`)
     .join("");
+  els.typeSelect.innerHTML = options;
+  els.materialTypeFilter.innerHTML = `<option value="">全部类型</option>` + options;
   renderTypePreview();
 }
 
@@ -143,6 +173,7 @@ async function uploadFiles() {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
   fd.append("scope", els.uploadScope.value);
+  fd.append("type_id", els.typeSelect.value);
   els.btnUpload.disabled = true;
   try {
     const res = await api("/materials/upload", { method: "POST", body: fd });
@@ -205,6 +236,12 @@ function openEvents() {
       fetchOutline();
     } else if (ev.stage === "done") {
       fetchDraft();
+    } else if (ev.stage === "chat_question") {
+      appendChatBubble("assistant", ev.message);
+      setState(S.CLARIFYING);
+    } else if (ev.stage === "chat_ready") {
+      appendChatBubble("assistant", `✅ ${ev.message}。点「发送」继续补充，或点「信息够了，直接生成」。`);
+      setState(S.CHOOSING);
     } else if (ev.stage === "error") {
       setState(S.ERROR, ev.message);
     }
@@ -291,14 +328,21 @@ function renderDraft(draft) {
   els.dlDocx.href = `/api/download/${sessionId}/docx`;
 
   els.sectionsView.innerHTML = "";
+  if (draft.review_summary && draft.review_summary.avg_score) {
+    const avg = document.createElement("div");
+    avg.className = "review-avg";
+    avg.textContent = `📊 评审均分 ${draft.review_summary.avg_score}/100（${draft.review_summary.graded_sections} 章已打分）`;
+    els.sectionsView.appendChild(avg);
+  }
   draft.sections.forEach((sec) => {
     const card = document.createElement("div");
     card.className = "sec-card";
     card.innerHTML = `
       <div class="sec-head">
-        <h3>${escapeHtml(sec.title)}</h3>
+        <h3>${escapeHtml(sec.title)}${scoreBadgeHtml(sec.review)}</h3>
         <span class="word-count">${sec.word_count} 字${sec.user_revised ? " · 已修订" : ""}</span>
       </div>
+      ${scoreDetailHtml(sec.review)}
       <div class="md-body">${renderMarkdown(sec.content || "")}</div>
       <details class="raw-md"><summary>查看原始 Markdown</summary><pre>${escapeHtml(sec.content || "")}</pre></details>
       <textarea class="sec-feedback" data-key="${escapeAttr(sec.key)}" rows="2"
@@ -307,6 +351,28 @@ function renderDraft(draft) {
     els.sectionsView.appendChild(card);
   });
   els.globalFeedback.value = "";
+}
+
+function scoreBadgeHtml(review) {
+  if (!review || !review.score) return "";
+  return `<span class="score-badge" data-grade="${escapeAttr(review.grade || "")}">${review.score} 分 · ${escapeHtml(review.grade || "")}</span>`;
+}
+
+function scoreDetailHtml(review) {
+  if (!review || !review.score) return "";
+  const dims = review.dimension_scores || {};
+  const caps = { content_quality: 40, structure_logic: 30, language: 20, format_spec: 10 };
+  const names = { content_quality: "内容质量", structure_logic: "结构逻辑", language: "语言表达", format_spec: "格式规范" };
+  const fb = review.detailed_feedback || {};
+  const lines = Object.keys(caps)
+    .map((k) => {
+      const v = dims[k] != null ? `${dims[k]}/${caps[k]}` : `-/${caps[k]}`;
+      const comment = fb[k] ? ` — ${fb[k]}` : "";
+      return `<li>${names[k]}: ${v}${escapeHtml(comment)}</li>`;
+    })
+    .join("");
+  const notes = review.reviewer_notes ? `<p>总体评语：${escapeHtml(review.reviewer_notes)}</p>` : "";
+  return `<details class="score-detail"><summary>评分明细</summary><ul>${lines}</ul>${notes}</details>`;
 }
 
 function collectFeedback() {
@@ -338,6 +404,140 @@ async function submitRevise() {
   }
 }
 
+// ------------------------------------------------------------ 对话式撰写
+function appendChatBubble(role, text) {
+  const div = document.createElement("div");
+  div.className = `chat-bubble ${role}`;
+  div.textContent = text;
+  els.chatMessages.appendChild(div);
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+async function startChat() {
+  resetProgress();
+  els.chatMessages.innerHTML = "";
+  const first = els.topicInput.value.trim();
+  appendChatBubble("system", "对话式撰写：先聊聊你的需求");
+  if (first) {
+    appendChatBubble("user", first);
+  }
+  try {
+    const res = await api("/chat/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type_id: els.typeSelect.value,
+        message: first || "我想写一份材料",
+      }),
+    });
+    sessionId = res.session_id;
+    setState(S.CLARIFYING);
+    openEvents();
+  } catch (e) {
+    setState(S.ERROR, e.message);
+  }
+}
+
+async function sendChatMessage(force) {
+  const text = els.chatInput.value.trim();
+  if (!text && !force) return;
+  if (text) {
+    appendChatBubble("user", text);
+    els.chatInput.value = "";
+  }
+  els.btnChatSend.disabled = true;
+  els.btnChatGenerate.disabled = true;
+  try {
+    await api(`/chat/${sessionId}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, force: !!force }),
+    });
+    // 后续状态由 SSE 事件驱动（chat_question / chat_ready / start）
+    if (force) setState(S.WRITING);
+  } catch (e) {
+    setState(S.ERROR, e.message);
+  }
+}
+
+// ------------------------------------------------------------ 材料管理
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1024 / 1024).toFixed(1) + " MB";
+}
+
+async function toggleMaterialsPanel() {
+  const show = els.cardMaterials.classList.contains("hidden");
+  els.cardMaterials.classList.toggle("hidden", !show);
+  if (show) await loadMaterials();
+}
+
+async function loadMaterials() {
+  const tid = els.materialTypeFilter.value;
+  const q = tid ? `?type_id=${encodeURIComponent(tid)}` : "";
+  const res = await api(`/materials${q}`);
+  renderMaterials(res.items || []);
+}
+
+function renderMaterials(items) {
+  if (!items.length) {
+    els.materialsList.innerHTML = '<p class="hint">暂无材料，可在上方上传。</p>';
+    return;
+  }
+  const rows = items
+    .map(
+      (m) => `<tr>
+        <td>${escapeHtml(m.type_name)}</td>
+        <td>${m.scope === "facts" ? "事实库" : "风格库"}</td>
+        <td>${escapeHtml(m.filename)}</td>
+        <td>${fmtSize(m.size)}</td>
+        <td><button class="mat-del" data-type="${escapeAttr(m.type_id)}"
+            data-scope="${escapeAttr(m.scope)}" data-name="${escapeAttr(m.filename)}">删除</button></td>
+      </tr>`
+    )
+    .join("");
+  els.materialsList.innerHTML = `
+    <table class="mat-table">
+      <thead><tr><th>类型</th><th>库</th><th>文件</th><th>大小</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  els.materialsList.querySelectorAll(".mat-del").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      deleteMaterial(btn.dataset.type, btn.dataset.scope, btn.dataset.name)
+    );
+  });
+}
+
+async function deleteMaterial(typeId, scope, filename) {
+  if (!confirm(`确定删除 ${typeId}/${scope}/${filename}？`)) return;
+  try {
+    await api(`/materials/${encodeURIComponent(typeId)}/${encodeURIComponent(scope)}/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    els.materialsMsg.textContent = `已删除 ${filename}`;
+    await loadMaterials();
+  } catch (e) {
+    alert("删除失败：" + e.message);
+  }
+}
+
+async function reingestMaterials() {
+  const tid = els.materialTypeFilter.value;
+  const q = tid ? `?type_id=${encodeURIComponent(tid)}` : "";
+  els.btnReingest.disabled = true;
+  els.materialsMsg.textContent = "同步中…";
+  try {
+    const res = await api(`/materials/reingest${q}`, { method: "POST" });
+    const parts = Object.entries(res.ingested || {})
+      .map(([t, scopes]) => `${t}: facts ${scopes.facts || 0}/style ${scopes.style || 0}`)
+      .join("；");
+    els.materialsMsg.textContent = `已同步（${res.backend} 模式）：${parts}`;
+  } catch (e) {
+    els.materialsMsg.textContent = "同步失败：" + e.message;
+  } finally {
+    els.btnReingest.disabled = false;
+  }
+}
+
 // ------------------------------------------------------------ 工具
 function escapeHtml(s) {
   return String(s)
@@ -356,6 +556,18 @@ els.btnUpload.addEventListener("click", uploadFiles);
 els.btnStart.addEventListener("click", startWrite);
 els.btnConfirmOutline.addEventListener("click", confirmOutline);
 els.btnRevise.addEventListener("click", submitRevise);
+els.btnChatStart.addEventListener("click", startChat);
+els.btnChatSend.addEventListener("click", () => sendChatMessage(false));
+els.btnChatGenerate.addEventListener("click", () => sendChatMessage(true));
+els.btnMaterials.addEventListener("click", toggleMaterialsPanel);
+els.btnReingest.addEventListener("click", reingestMaterials);
+els.materialTypeFilter.addEventListener("change", loadMaterials);
+els.chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage(false);
+  }
+});
 
 loadTypes().catch((e) => appendLog({ stage: "error", message: "类型加载失败: " + e.message }));
 setState(S.IDLE);

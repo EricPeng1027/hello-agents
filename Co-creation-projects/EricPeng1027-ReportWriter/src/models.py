@@ -57,9 +57,12 @@ class DocumentTypeSpec:
     material_top_k: int = 3
     # 该类型如何使用参考材料的说明（风格/口径/事实 等）
     material_role_hint: str = ""
-    # 事实材料目录（相对 data_dir）：内容必须基于它（数据/事实/口径）
+    # 该类型专属材料子目录（相对 data_dir）：实现按类型隔离
+    # 为空时材料直接放在 data_dir 下（向后兼容单库模式）
+    material_base_dir: str = ""
+    # 事实材料目录（相对材料根）：内容必须基于它（数据/事实/口径）
     material_facts_dir: str = "facts"
-    # 风格材料目录（相对 data_dir）：仅参考写法与结构，不得照搬内容
+    # 风格材料目录（相对材料根）：仅参考写法与结构，不得照搬内容
     material_style_dir: str = "style"
 
     def uses_split_material_dirs(self) -> bool:
@@ -161,3 +164,15 @@ class ReviewResult:
             revised_content=data.get("revised_content"),
             reviewer_notes=data.get("reviewer_notes", ""),
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """序列化为可 JSON dump 的 dict（存入 SectionDraft.metadata）"""
+        return {
+            "score": self.score,
+            "grade": self.grade,
+            "dimension_scores": self.dimension_scores,
+            "detailed_feedback": self.detailed_feedback,
+            "needs_revision": self.needs_revision,
+            "revised_content": self.revised_content,
+            "reviewer_notes": self.reviewer_notes,
+        }

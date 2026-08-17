@@ -10,6 +10,9 @@
 
 Drafter 的 ToolExecutor 接受 (name, description, func(str)->str)，
 故这里提供一个工厂函数生成可调用对象。
+
+材料按类型隔离时（Spec.material_base_dir 非空），scope 会自动带类型命名空间
+（如 "work_summary:facts"），调用方写法不变。
 """
 
 import re
@@ -36,7 +39,12 @@ def build_recall_material_tool(
     """
 
     def recall_material(query: str) -> str:
-        scope, real_query = _parse_scope_prefix(query) or (default_scope, query)
+        parsed = _parse_scope_prefix(query)
+        if parsed:
+            role, real_query = parsed
+            scope = f"{default_scope}:{role}" if default_scope else role
+        else:
+            scope, real_query = default_scope, query
         result = material_manager.search(real_query, top_k=top_k, scope=scope)
         scope_label = f"[{scope}] " if scope else ""
         return result or f"（{scope_label}未检索到相关参考材料）"

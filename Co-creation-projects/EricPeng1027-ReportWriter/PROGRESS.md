@@ -1,6 +1,6 @@
 # ReportWriter 项目进展与后续 TODO
 
-> 最后更新: 2026-08-14
+> 最后更新: 2026-08-17
 > 分支: `feature/EricPeng1027-ReportWriter`
 > 位置: `Co-creation-projects/EricPeng1027-ReportWriter/`
 
@@ -27,7 +27,7 @@ EricPeng1027-ReportWriter/
 ├── README.md                   # 完整文档
 ├── requirement.txt             # 依赖(hello-agents/docx/qdrant/openai/markitdown/fastapi/sse)
 ├── .env                        # 已配 LLM_*;QDRANT_*/EMBED_* 已可用
-├── data/                       # 参考材料(facts/ 事实 + style/ 风格)
+├── data/                       # 参考材料（按类型分目录：<type_id>/facts 事实 + style 风格）
 ├── outputs/                    # 生成结果(时间戳子目录)
 ├── src/
 │   ├── config.py               # Settings(pydantic)
@@ -39,7 +39,7 @@ EricPeng1027-ReportWriter/
 │   ├── orchestrator.py         # 流水线编排(write/prepare/draft_with_outline/revise)
 │   ├── agents/                 # llm_service + planner + drafter + reviewer
 │   ├── materials/              # manager + rag_backend + local_backend + loader
-│   ├── tools/                  # recall_material 工具
+│   ├── tools/                  # recall_material + read_data_table 工具
 │   └── types/                  # work_summary + report + kpi_plan 三个 Spec
 └── web/
     ├── server.py               # FastAPI 路由 + SSE + 后台阶段执行
@@ -136,20 +136,13 @@ EricPeng1027-ReportWriter/
 - **冒烟测试**(`_smoke_web.py`,agent 方法级 stub)11 项断言组通过;`_smoke_revise.py` 断言⑥同步更新(dict 反馈从"应报错"改为"合法且只改目标章")并回归通过
 - **踩坑记录**: ① TestClient 经 httpx `trust_env` 会读系统代理把 `http://testserver` 请求拦到 proxyza → 测试里 patch `httpx.Client.__init__` 强制 `trust_env=False`;② TestClient 的 SSE 流式响应在连接复用下不稳定 → 冒烟直接断言 `session.events` backlog 结构/seq 单调,浏览器 EventSource 路径留给手动验证;③ 锁获取/释放必须在后台阶段线程内(不能在有路由里获取后跨 await 释放)
 
-### 3.2 🟡 环境配置补全(真实 RAG 运行前必做)
-用户 `.env` 里以下两组还是占位符:
-```bash
-# Qdrant(本地 Docker 最快: docker run -p 6333:6333 qdrant/qdrant)
-QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=
-
-# Embedding(dashscope text-embedding-v3,1024维,config.py 已对齐)
-EMBED_MODEL_TYPE=dashscope
-EMBED_MODEL_NAME=text-embedding-v3
-EMBED_API_KEY=<你的dashscope_key>
-EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-```
-> RAG 未就绪时已不再阻塞:自动降级为本地参考材料模式,仍可生成并注入参考片段。
+### 3.2 ✅ 环境配置补全（2026-08-17 已验证）
+`.env` 已切换为 **Qdrant（本地 Docker）+ Ollama 本地 Embedding（qwen3-embedding:8b, 4096 维）** 的真实 RAG 配置：
+- `QDRANT_URL=http://localhost:6333`（本地 Docker，`qdrant/qdrant` 容器）
+- `EMBED_BASE_URL=http://localhost:11434/v1`（Ollama OpenAI 兼容端点）
+- `QDRANT_VECTOR_SIZE=4096`（与 qwen3-embedding:8b 对齐）
+- **验证结果**：编排器 `material_mode=rag` 生效，facts/style 各自独立 collection（`reportwriter_vectors_*_facts/style`），检索命中正常（注入示例片段成功）；旧 `dashscope` 配置已注释保留，可一键切回
+- 本地 Qdrant 存留了历史 collection（reportwriter/demo/web），多 namespace 互不干扰
 
 ### 3.3 ✅ P2:补"汇报""KPI 计划"两个类型 Spec(2026-08-14 已完成)
 验证"新增类型 ≈ 新增 Spec 配置、零侵入核心代码"的扩展性承诺:
@@ -159,12 +152,21 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 - **冒烟测试**(`_smoke_types.py`,agent 方法级 stub)5 项断言组通过:类型注册/spec 结构(含 revise 模板)/两类型端到端 write(各 5 章)/按章节修订只改目标章/work_summary 回归
 - KPI 类型暂未加专属工具(如 kpi_calculator):当前 recall_material 已够用,量化计算工具留待真实使用中按需补(P3 工具扩展一并考虑)
 
+### 3.4b ✅ 材料按类型分目录 + 管理页面（2026-08-17 已完成）
+用户反馈：参考材料此前所有类型共享 `data/facts|style`，会互相污染检索。已实现按类型隔离 + Web 管理页：
+- **目录结构**：`data/<type_id>/facts|style`（如 `data/work_summary/facts/`）；Spec 新增 `material_base_dir` 字段（三个内置类型已配为各自 type_id）；历史 `data/facts|style` 文件已迁移到 `work_summary` 下
+- **检索隔离**：scope 从 `facts` 升级为 `"<type_id>:facts"` 命名空间，`MaterialManager._get_backend` 惰性派生独立后端（RAG collection 形如 `reportwriter_vectors_reportwriter_web_work_summary_facts`）；`recall_material` 在 `prepare()` 后按当前类型重注册（default_scope 带类型），`read_data_table` 查找范围扩展到各类型子目录
+- **管理 API**：`GET /api/materials[?type_id=]`（清单，含大小/修改时间/后端模式）、`POST /api/materials/upload`（必带 `type_id`，写入对应类型目录）、`DELETE /api/materials/{type}/{scope}/{file}`（basename 校验防穿越）、`POST /api/materials/reingest[?type_id=]`（按类型把磁盘材料导入检索库，幂等）
+- **管理页面**：左侧新增「🗂 材料管理」面板（类型筛选、表格列出类型/库/文件/大小、删除按钮、「同步到检索库」按钮）；上传控件标注"上传到当前所选类型"
+- **验证**：真实 RAG 类型专属库检索命中（`work_summary:facts` 正确召回 q2_data）；类型间隔离确认（`report:facts` 检索不到 work_summary 材料）；`_smoke_p3.py` 扩展至 **40 项断言**（新增用例6 分目录隔离 5 项 + 用例7 管理 API 10 项，含路径穿越/未知类型/重复删除边界）
+
 ### 3.4 🟢 P3 及以后
 - [x] ~~本地后端兜底(无 Qdrant 时用关键词/章节匹配,`material_mode="local"`)~~ —— P1.6 已实现 `local_backend.py` + `auto` 模式
-- [ ] 数据表读取/图表生成工具,支撑数据型材料
-- [ ] 多轮交互式撰写(~~全局反馈~~ P1.9、~~按章节细粒度~~ P1.10 已落地;对话式交互待 WebUI 聊天形态)
-- [ ] Planner/Drafter 的提示词调优(尤其 ReAct 的 `Finish[JSON]` 稳定性)
-- [ ] 评审打分维度落地(`ReviewResult` 目前未真正填充分数)
+- [x] **数据表读取工具**（P3.1，2026-08-17）：`src/tools/read_data_table.py`（`read_data_table`），Drafter 在 ReAct 循环中可调，读取 `data/facts|style` 下的 CSV/XLSX 返回 Markdown 表（截断保护：50 行/12 列/单元格 80 字符/总长 3000 字符）；支持 `read_data_table[文件]` 全表、`[文件][关键词]` 行过滤、`[文件][列=值]` 精确过滤；`.csv`/`.xlsx` 已并入 `loader.SUPPORTED_EXTENSIONS`，Web 上传同步放开；路径只取 basename 防穿越；XLSX 依赖 openpyxl，未装时返回明确提示不中断 ReAct
+- [x] **评审打分落地**（P3.2，2026-08-17）：`REVIEWER_SCORE_PROMPT`（四维：内容 40/结构 30/语言 20/格式 10）→ `ReviewAgent.score()` 单次 LLM 调用产出 `ReviewResult`（维度分截断到满分、总分求和、评级映射 优秀≥90/良好≥80/合格≥70/待改进≥60/不合格、needs_revision<70）；结果写入 `SectionDraft.metadata["review_result"]`，`draft.meta["review_summary"]` 汇总均分；web `/api/draft` 返回各章评分 + 前端 `score-badge`/`score-detail` 展示；打分失败静默兜底 0 分不影响主流程
+- [x] **对话式撰写**（P3.3，2026-08-17）：Web 聊天形态——`POST /api/chat/start` + `/api/chat/{sid}/message`（澄清循环，`CHAT_CLARIFY_PROMPT` 单次 LLM 调用提炼主题+生成下一追问，`ready=True` 进 `choosing` 态）、`force` 或超 5 轮直接进入撰写；澄清消息存 `session.chat_messages`；前端新增 `card-chat` 面板（气泡消息、Enter 发送、「信息够了，直接生成」按钮）；复用既有 prepare→outline→draft 流水线与 SSE 事件（新增 `chat_question`/`chat_ready` 事件）
+- [x] **ReAct `Finish[JSON]` 稳定性**（P3.4，2026-08-17）：① `DRAFTER_REACT_PROMPT` 加 5 条硬规则（单 Action、Action 独占一行、仅正文写完后 Finish、事实依据充分时**不调用工具**最多 2 次、严禁把 Thought/Action 写进 content）；② `_salvage_action()` 解析层挽救——模型只输出裸 JSON 或把 Finish 写在非 Action 行时兜底提取；③ 同工具同参数连续调用检测→提示直接 Finish；④ 真实 LLM 单章验证：一轮 `Finish` 完成、未触发多余工具调用
+- [ ] 图表生成工具（数据表 → 柱状/折线图，留待真实使用按需补）
 
 ---
 
@@ -177,7 +179,11 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 | 参考类型 Spec 写法 | `src/types/work_summary.py` / `report.py` / `kpi_plan.py` |
 | 改某范式的提示词 | `src/prompts.py` + `src/types/work_summary.py` 的 `custom_prompts` |
 | 调 RAG 检索/导入 | `src/materials/rag_backend.py`、`src/materials/manager.py` |
+| 材料按类型分目录 | Spec 的 `material_base_dir` + `orchestrator._ingest_materials()` 的 scope 命名空间 |
 | 调本地兜底检索 | `src/materials/local_backend.py` |
+| 加数据表/图表工具 | `src/tools/read_data_table.py`（仿 `recall_material.py` 工厂模式） |
+| 调评审打分 | `src/agents/reviewer.py` 的 `score()` + `src/prompts.py` 的 `REVIEWER_SCORE_PROMPT` |
+| 调对话式撰写 | `web/server.py` 的 `/api/chat/*` + `web/static/app.js` 的 `startChat/sendChatMessage` |
 | 调导出格式 | `src/exporter.py` |
 | 调配置/阈值 | `src/config.py` + `.env` |
 | 框架真实 API 参考 | `Python312/Lib/site-packages/hello_agents/` |
@@ -199,4 +205,10 @@ EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 - [x] **P1.9 用户反馈修订**: `orchestrator.revise(draft, feedback)` 全文统一意见逐章修订 + facts 检索注入 + reingest;修复 qdrant-client `search()` 已移除导致 RAG 静默返回空(2026-08-14)
 - [x] **P1.10 Web UI**: FastAPI+SSE+原生前端;撰写/大纲确认/反馈修订(按章节)/材料上传;编排器拆分 prepare/draft_with_outline + 进度回调;WRITE_LOCK 串行化(2026-08-14)
 - [x] **P2 新材料类型**: 汇报(report,结论先行 5 章)+ KPI 计划(kpi_plan,SMART 5 章)Spec 注册,核心零改动验证可扩展性(2026-08-14)
-- [ ] P3: 交互式撰写(对话式) / 工具扩展(数据表/图表) / 评审打分落地
+- [x] **P3.1 数据表读取工具**: `read_data_table`(CSV/XLSX,关键词/列过滤,截断保护,防路径穿越),注册进 Drafter ReAct 工具集,上传白名单放开(2026-08-17)
+- [x] **P3.2 评审打分落地**: `ReviewAgent.score()` + `REVIEWER_SCORE_PROMPT` 四维打分→`ReviewResult` 真实填充,写入章节 metadata 与 draft.meta 汇总,web 前端展示评分(2026-08-17)
+- [x] **P3.3 对话式撰写**: Web 聊天形态(/api/chat/* 澄清循环→choosing→复用主流水线),前端聊天气泡面板(2026-08-17)
+- [x] **P3.4 ReAct 稳定性**: 提示词硬规则 + `_salvage_action` 解析挽救 + 循环调用检测,真实 LLM 一轮 Finish 验证通过(2026-08-17)
+- [x] **P3.5 冒烟测试**: `_smoke_p3.py` 25 项断言组通过(数据表/打分/ReAct 解析/端到端 stub write 带评分/对话式 API)(2026-08-17)
+- [x] **P3.6 材料按类型分目录 + 管理页面**: Spec 加 `material_base_dir`(data/<type>/facts|style),scope 升级为 `"<type>:facts"` 命名空间实现检索隔离;管理 API(列表/上传带类型/删除防穿越/幂等 reingest)+ 前端管理面板;冒烟扩展至 40 项断言全过(2026-08-17)
+- [ ] P4: 图表生成工具 / 其余按需扩展
